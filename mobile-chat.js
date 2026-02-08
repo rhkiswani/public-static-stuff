@@ -74,7 +74,15 @@
       '.mc-send{width:40px;height:40px;border-radius:50%;border:none;background:#34aadc;color:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0}',
       '.mc-send:disabled{opacity:.5;cursor:not-allowed}',
       '.mc-send svg{width:20px;height:20px}',
-      '.mc-markdown-content p{margin:0 0 6px}.mc-markdown-content p:last-child{margin:0}'
+      '.mc-markdown-content p{margin:0 0 6px}.mc-markdown-content p:last-child{margin:0}',
+      '.mc-function-calls{margin-top:10px;padding:10px;background:rgba(0,0,0,.06);border-radius:10px;font-size:13px}',
+      '.mc-function-calls-header{font-weight:600;color:#555;margin-bottom:8px}',
+      '.mc-function-calls-content{display:block}',
+      '.mc-function-call{margin-bottom:8px;padding:8px;background:#fff;border-radius:8px;border-left:3px solid #34aadc}',
+      '.mc-function-call:last-child{margin-bottom:0}',
+      '.mc-function-name{font-weight:600;color:#34aadc;display:flex;align-items:center;flex-wrap:wrap;gap:4px}',
+      '.mc-function-icon{margin-right:4px}',
+      '.mc-function-param-preview{color:#666;font-weight:normal;font-size:12px}'
     ].join('');
 
     var styleEl = document.createElement('style');
@@ -113,12 +121,129 @@
     if (!content || typeof content !== 'string') return content || '';
     content = content.replace(/<function_calls>\s*<invoke name="ask">\s*<parameter name="text">([\s\S]*?)<\/parameter>\s*<\/invoke>\s*<\/function_calls>/gi, '$1');
     content = content.replace(/<function_calls>\s*<invoke name="complete">\s*<parameter name="text">([\s\S]*?)<\/parameter>\s*<\/invoke>\s*<\/function_calls>/gi, '$1');
-    return content.replace(/<function_calls>[\s\S]*?<\/function_calls>/gi, ' ').replace(/\s+/g, ' ').trim();
+    return content;
+  };
+
+  MobileChatWidget.prototype.isNewXmlFormat = function(content) {
+    return content && /<function_calls>[\s\S]*<invoke\s+name=/.test(content);
+  };
+
+  MobileChatWidget.prototype.parseXmlToolCalls = function(content) {
+    var toolCalls = [];
+    var functionCallsRegex = /<function_calls>([\s\S]*?)<\/function_calls>/gi;
+    var functionCallsMatch;
+    while ((functionCallsMatch = functionCallsRegex.exec(content)) !== null) {
+      var functionCallsContent = functionCallsMatch[1];
+      var invokeRegex = /<invoke\s+name=["']([^"']+)["']>([\s\S]*?)<\/invoke>/gi;
+      var invokeMatch;
+      while ((invokeMatch = invokeRegex.exec(functionCallsContent)) !== null) {
+        var functionName = invokeMatch[1].replace(/_/g, '-');
+        var invokeContent = invokeMatch[2];
+        var parameters = {};
+        var paramRegex = /<parameter\s+name=["']([^"']+)["']>([\s\S]*?)<\/parameter>/gi;
+        var paramMatch;
+        while ((paramMatch = paramRegex.exec(invokeContent)) !== null) {
+          parameters[paramMatch[1]] = paramMatch[2].trim();
+        }
+        toolCalls.push({ functionName: functionName, parameters: parameters });
+      }
+    }
+    return toolCalls;
   };
 
   MobileChatWidget.prototype.parseFunctionCalls = function(text) {
-    var clean = this.preprocessTextOnlyTools(text || '');
-    return { text: clean, functionCalls: null };
+    var raw = text || '';
+    var preprocessed = this.preprocessTextOnlyTools(raw);
+    if (!this.debug || !this.isNewXmlFormat(preprocessed)) {
+      var clean = preprocessed.replace(/<function_calls>[\s\S]*?<\/function_calls>/gi, ' ').replace(/\s+/g, ' ').trim();
+      return { text: clean, functionCalls: null };
+    }
+    var functionCallsRegex = /<function_calls>([\s\S]*?)<\/function_calls>/gi;
+    var match;
+    var lastIndex = 0;
+    var textParts = [];
+    var allFunctionCalls = [];
+    while ((match = functionCallsRegex.exec(preprocessed)) !== null) {
+      if (match.index > lastIndex) {
+        var textBefore = preprocessed.substring(lastIndex, match.index).trim();
+        if (textBefore) textParts.push(textBefore);
+      }
+      var toolCalls = this.parseXmlToolCalls(match[0]);
+      for (var i = 0; i < toolCalls.length; i++) {
+        var tc = toolCalls[i];
+        var name = tc.functionName;
+        if (name !== 'ask' && name !== 'complete' && name !== 'present-presentation') {
+          allFunctionCalls.push(tc);
+        }
+      }
+      lastIndex = match.index + match[0].length;
+    }
+    if (lastIndex < preprocessed.length) {
+      var remaining = preprocessed.substring(lastIndex).trim();
+      if (remaining) textParts.push(remaining);
+    }
+    var cleanText = textParts.join(' ').replace(/\s+/g, ' ').trim();
+    return { text: cleanText, functionCalls: allFunctionCalls.length > 0 ? allFunctionCalls : null };
+  };
+
+  MobileChatWidget.prototype.getUserFriendlyToolName = function(toolName) {
+    var map = { 'execute-command': 'Executing Command', 'create-file': 'Creating File', 'delete-file': 'Deleting File', 'read-file': 'Reading File', 'web-search': 'Searching Web', 'web_search': 'Searching Web', 'browser-navigate-to': 'Navigating', 'browser-act': 'Performing Action', 'ask': 'Ask', 'complete': 'Completing Task' };
+    if (toolName.indexOf('mcp-') === 0) {
+      var parts = toolName.split('-');
+      if (parts.length >= 3) {
+        var server = parts[1].charAt(0).toUpperCase() + parts[1].slice(1);
+        var toolPart = parts.slice(2).join('-').replace(/-/g, ' ').replace(/\b\w/g, function(c) { return c.toUpperCase(); });
+        return server + ': ' + toolPart;
+      }
+    }
+    if (map[toolName]) return map[toolName];
+    return toolName.split('-').map(function(w) { return w.charAt(0).toUpperCase() + w.slice(1); }).join(' ');
+  };
+
+  MobileChatWidget.prototype.getToolIcon = function(toolName) {
+    var iconMap = { 'execute-command': '\u26a1', 'create-file': '\u1f4c4', 'delete-file': '\u1f5d1', 'read-file': '\u1f4d6', 'web-search': '\u1f50d', 'web_search': '\u1f50d', 'browser-navigate-to': '\u1f310', 'deploy-site': '\u1f680' };
+    if (toolName.indexOf('mcp-') === 0) return '\u1f50c';
+    return iconMap[toolName] || '\u2699\ufe0f';
+  };
+
+  MobileChatWidget.prototype.extractPrimaryParam = function(toolCall) {
+    var p = toolCall.parameters;
+    if (p.file_path) return p.file_path;
+    if (p.command) return p.command;
+    if (p.query) return p.query;
+    if (p.url) return p.url;
+    if (p.target_file) return p.target_file;
+    if (p.text) return p.text;
+    return null;
+  };
+
+  MobileChatWidget.prototype.createFunctionCallsElement = function(functionCalls) {
+    var container = document.createElement('div');
+    container.className = 'mc-function-calls';
+    var header = document.createElement('div');
+    header.className = 'mc-function-calls-header';
+    header.textContent = functionCalls.length + ' tool call' + (functionCalls.length !== 1 ? 's' : '');
+    container.appendChild(header);
+    var content = document.createElement('div');
+    content.className = 'mc-function-calls-content';
+    for (var i = 0; i < functionCalls.length; i++) {
+      var tc = functionCalls[i];
+      var friendly = this.getUserFriendlyToolName(tc.functionName);
+      var primary = this.extractPrimaryParam(tc);
+      var callDiv = document.createElement('div');
+      callDiv.className = 'mc-function-call';
+      var nameDiv = document.createElement('div');
+      nameDiv.className = 'mc-function-name';
+      nameDiv.innerHTML = '<span class="mc-function-icon">' + this.getToolIcon(tc.functionName) + '</span> ' + this.escapeHtml(friendly);
+      if (primary) {
+        var display = String(primary).length > 48 ? String(primary).substring(0, 45) + '...' : String(primary);
+        nameDiv.innerHTML += ' <span class="mc-function-param-preview">' + this.escapeHtml(display) + '</span>';
+      }
+      callDiv.appendChild(nameDiv);
+      content.appendChild(callDiv);
+    }
+    container.appendChild(content);
+    return container;
   };
 
   MobileChatWidget.prototype.processInlineMarkdown = function(text) {
@@ -292,6 +417,9 @@
         inner.innerHTML = this.renderMarkdown(parsed.text);
         bubble.appendChild(inner);
       }
+      if (this.debug && parsed.functionCalls && parsed.functionCalls.length) {
+        bubble.appendChild(this.createFunctionCallsElement(parsed.functionCalls));
+      }
       row.appendChild(bubble);
       el.appendChild(row);
     }
@@ -318,6 +446,9 @@
       inner.className = 'mc-markdown-content';
       inner.innerHTML = this.renderMarkdown(parsed.text);
       bubble.appendChild(inner);
+    }
+    if (this.debug && parsed.functionCalls && parsed.functionCalls.length) {
+      bubble.appendChild(this.createFunctionCallsElement(parsed.functionCalls));
     }
     row.appendChild(bubble);
     el.appendChild(row);
@@ -355,6 +486,9 @@
       inner.className = 'mc-markdown-content';
       inner.innerHTML = this.renderMarkdown(parsed.text);
       bubble.appendChild(inner);
+    }
+    if (this.debug && parsed.functionCalls && parsed.functionCalls.length) {
+      bubble.appendChild(this.createFunctionCallsElement(parsed.functionCalls));
     }
     var list = document.getElementById(this.containerId + '-messages');
     if (list) list.scrollTop = list.scrollHeight;
