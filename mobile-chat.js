@@ -18,47 +18,15 @@
     this.threadId = null;
     this.messages = [];
     this.agentData = null;
-    this.storageKey = 'mobile-chat-' + this.agentId;
-    this.threadStorageKey = 'mobile-chat-thread-' + this.agentId;
 
     this.init();
   }
 
   MobileChatWidget.prototype.init = function() {
     this.createWidget();
-    this.loadSavedData();
     this.loadAgentData().then(function() {
       this.loadThread();
     }.bind(this));
-  };
-
-  MobileChatWidget.prototype.loadSavedData = function() {
-    try {
-      var savedThreadId = localStorage.getItem(this.threadStorageKey);
-      if (savedThreadId) {
-        this.threadId = savedThreadId;
-      }
-      var savedMessages = localStorage.getItem(this.storageKey);
-      if (savedMessages) {
-        this.messages = JSON.parse(savedMessages);
-      }
-    } catch (e) {
-      if (this.debug) console.error('MobileChat: loadSavedData', e);
-    }
-  };
-
-  MobileChatWidget.prototype.saveMessages = function() {
-    try {
-      localStorage.setItem(this.storageKey, JSON.stringify(this.messages));
-    } catch (e) {
-      if (this.debug) console.error('MobileChat: saveMessages', e);
-    }
-  };
-
-  MobileChatWidget.prototype.saveThreadId = function() {
-    try {
-      if (this.threadId) localStorage.setItem(this.threadStorageKey, this.threadId);
-    } catch (e) {}
   };
 
   MobileChatWidget.prototype.createWidget = function() {
@@ -205,13 +173,6 @@
 
   MobileChatWidget.prototype.loadThread = function() {
     var self = this;
-    if (this.threadId) {
-      this.renderSavedMessages();
-      if (this.messages.length === 0 && this.agentData && this.agentData.greeting_message) {
-        this.showGreetingMessage();
-      }
-      return;
-    }
     fetch(this.apiUrl + '/threads', {
       method: 'POST',
       headers: { 'X-API-Key': this.apiKey },
@@ -221,7 +182,6 @@
       return r.json();
     }).then(function(data) {
       self.threadId = data.thread_id;
-      self.saveThreadId();
       self.renderSavedMessages();
       if (self.messages.length === 0 && self.agentData && self.agentData.greeting_message) {
         self.showGreetingMessage();
@@ -296,7 +256,6 @@
     el.appendChild(row);
     el.scrollTop = el.scrollHeight;
     this.messages.push({ id: id, type: type, text: text });
-    this.saveMessages();
     return id;
   };
 
@@ -317,7 +276,6 @@
     var idx = this.messages.findIndex(function(m) { return m.id === messageId; });
     if (idx !== -1) {
       this.messages[idx].text = text;
-      this.saveMessages();
     }
     var row = document.getElementById(messageId);
     if (!row) return;
