@@ -98,114 +98,52 @@
         }
         .baseai-widget-container {
           position: fixed;
-          bottom: 0;
-          right: 0;
-          left: 0;
+          inset: 0;
           z-index: 999999;
           font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-          pointer-events: none;
-        }
-        .baseai-widget-button {
-          position: fixed;
-          bottom: 20px;
-          right: 20px;
-          width: 64px;
-          height: 64px;
-          border-radius: 50%;
-          background: #0088cc;
-          border: none;
-          cursor: pointer;
-          box-shadow: 0 8px 24px rgba(0, 136, 204, 0.4), 0 4px 8px rgba(0, 0, 0, 0.1);
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
           pointer-events: auto;
-          z-index: 1000000;
-          position: relative;
-          overflow: hidden;
+          /* iPhone: full viewport including safe areas */
+          width: 100%;
+          height: 100%;
+          height: 100dvh;
+          min-height: -webkit-fill-available;
         }
-        @media (prefers-color-scheme: dark) {
-          .baseai-widget-button {
-            background: #2b5278;
-          }
-        }
-        .baseai-widget-button::before {
-          content: '';
-          position: absolute;
-          top: 50%;
-          left: 50%;
-          width: 0;
-          height: 0;
-          border-radius: 50%;
-          background: rgba(255, 255, 255, 0.2);
-          transform: translate(-50%, -50%);
-          transition: width 0.6s, height 0.6s;
-        }
-        .baseai-widget-button:hover::before {
-          width: 300px;
-          height: 300px;
-        }
-        .baseai-widget-button:hover {
-          transform: scale(1.05);
-          background: #006699;
-          box-shadow: 0 12px 32px rgba(0, 136, 204, 0.5), 0 6px 12px rgba(0, 0, 0, 0.15);
-        }
-        @media (prefers-color-scheme: dark) {
-          .baseai-widget-button:hover {
-            background: #006699;
-          }
-        }
-        .baseai-widget-button:active {
-          transform: scale(0.95);
-        }
-        .baseai-widget-button svg {
-          width: 28px;
-          height: 28px;
-          fill: white;
-          filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.2));
-          position: relative;
-          z-index: 1;
-          transition: transform 0.3s;
-        }
-        .baseai-widget-button:hover svg {
-          transform: scale(1.05);
+        .baseai-widget-container.closed {
+          display: none;
         }
         .baseai-widget-chatbox {
-          position: fixed;
-          bottom: 0;
-          right: 0;
-          left: 0;
-          top: 0;
+          position: absolute;
+          inset: 0;
           background: #ffffff;
           display: flex;
           flex-direction: column;
           overflow: hidden;
-          transform: translateY(100%) scale(0.9);
-          opacity: 0;
-          transition: transform 0.4s cubic-bezier(0.4, 0, 0.2, 1), 
-                      opacity 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-          pointer-events: auto;
-          z-index: 1000001;
+          /* Always visible, full-screen (no button, no toggle) */
+          transform: none;
+          opacity: 1;
+          width: 100%;
+          height: 100%;
+          height: 100dvh;
+          min-height: -webkit-fill-available;
         }
         @media (prefers-color-scheme: dark) {
           .baseai-widget-chatbox {
             background: #17212b;
           }
         }
-        .baseai-widget-chatbox.open {
-          transform: translateY(0) scale(1);
-          opacity: 1;
-        }
         .baseai-widget-header {
           background: #0088cc;
           color: white;
-          padding: 20px 24px;
+          padding: 16px 20px;
+          padding-top: max(16px, env(safe-area-inset-top));
+          padding-left: max(20px, env(safe-area-inset-left));
+          padding-right: max(20px, env(safe-area-inset-right));
           display: flex;
           justify-content: space-between;
           align-items: center;
           box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-          min-height: 72px;
+          min-height: 56px;
+          flex-shrink: 0;
           position: relative;
         }
         @media (prefers-color-scheme: dark) {
@@ -215,9 +153,14 @@
         }
         .baseai-widget-header h3 {
           margin: 0;
-          font-size: 20px;
+          font-size: 18px;
           font-weight: 600;
           letter-spacing: -0.02em;
+          flex: 1;
+          min-width: 0;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
         }
         .baseai-widget-close {
           background: rgba(255, 255, 255, 0.2);
@@ -225,13 +168,16 @@
           color: white;
           cursor: pointer;
           padding: 10px;
-          width: 40px;
-          height: 40px;
+          min-width: 44px;
+          min-height: 44px;
+          width: 44px;
+          height: 44px;
           border-radius: 50%;
           display: flex;
           align-items: center;
           justify-content: center;
           transition: all 0.2s;
+          -webkit-tap-highlight-color: transparent;
         }
         .baseai-widget-close:hover {
           background: rgba(255, 255, 255, 0.3);
@@ -246,14 +192,18 @@
         .baseai-widget-messages {
           flex: 1;
           overflow-y: auto;
+          overflow-x: hidden;
           padding: 16px 12px;
+          padding-left: max(12px, env(safe-area-inset-left));
+          padding-right: max(12px, env(safe-area-inset-right));
           background: #e8e8e8;
           -webkit-overflow-scrolling: touch;
           scroll-behavior: smooth;
+          overscroll-behavior: contain;
         }
         @media (min-width: 768px) {
           .baseai-widget-messages {
-            padding: 20px 20px;
+            padding: 20px;
           }
         }
         @media (prefers-color-scheme: dark) {
@@ -599,12 +549,16 @@
         }
         .baseai-widget-input-container {
           padding: 12px 16px;
+          padding-bottom: max(12px, env(safe-area-inset-bottom));
+          padding-left: max(16px, env(safe-area-inset-left));
+          padding-right: max(16px, env(safe-area-inset-right));
           background: white;
           border-top: 1px solid #e2e8f0;
           display: flex;
           gap: 8px;
           align-items: center;
           box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.05);
+          flex-shrink: 0;
         }
         @media (prefers-color-scheme: dark) {
           .baseai-widget-input-container {
@@ -617,11 +571,13 @@
           border: 2px solid #e2e8f0;
           border-radius: 24px;
           padding: 12px 20px;
-          font-size: 15px;
+          font-size: 16px;
           outline: none;
           transition: all 0.2s;
           background: #f8fafc;
           color: #1e293b;
+          -webkit-appearance: none;
+          min-height: 44px;
         }
         .baseai-widget-input:focus {
           border-color: #0088cc;
@@ -646,6 +602,8 @@
         .baseai-widget-send {
           width: 44px;
           height: 44px;
+          min-width: 44px;
+          min-height: 44px;
           border-radius: 50%;
           background: #0088cc;
           border: none;
@@ -657,6 +615,7 @@
           transition: all 0.2s;
           flex-shrink: 0;
           box-shadow: 0 2px 8px rgba(0, 136, 204, 0.3);
+          -webkit-tap-highlight-color: transparent;
         }
         @media (prefers-color-scheme: dark) {
           .baseai-widget-send {
@@ -764,7 +723,8 @@
           }
         }
         .baseai-widget-powered {
-          padding: 12px 16px;
+          padding: 10px 16px;
+          padding-bottom: max(10px, env(safe-area-inset-bottom));
           text-align: center;
           background: #f8fafc;
           border-top: 1px solid #e2e8f0;
@@ -774,6 +734,7 @@
           align-items: center;
           justify-content: center;
           gap: 4px;
+          flex-shrink: 0;
         }
         @media (prefers-color-scheme: dark) {
           .baseai-widget-powered {
@@ -795,45 +756,10 @@
         .baseai-widget-powered a:hover {
           color: #006699;
         }
-        /* Desktop styles */
-        @media (min-width: 640px) {
-          .baseai-widget-container {
-            bottom: 20px;
-            right: 20px;
-            left: auto;
-          }
-          .baseai-widget-button {
-            position: relative;
-            bottom: auto;
-            right: auto;
-          }
-          .baseai-widget-chatbox {
-            position: absolute;
-            bottom: 80px;
-            right: 0;
-            left: auto;
-            top: auto;
-            width: 420px;
-            height: 640px;
-            max-height: calc(100vh - 100px);
-            border-radius: 20px;
-            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
-            transform: scale(0.9) translateY(20px);
-            opacity: 0;
-          }
-          .baseai-widget-chatbox.open {
-            transform: scale(1) translateY(0);
-            opacity: 1;
-          }
+        /* Keep full-screen on all viewports (no floating window) */
+        @media (min-width: 768px) {
           .baseai-widget-message-bubble {
             max-width: 75%;
-          }
-        }
-        /* Large desktop */
-        @media (min-width: 1024px) {
-          .baseai-widget-chatbox {
-            width: 440px;
-            height: 680px;
           }
         }
       `;
@@ -842,10 +768,10 @@
       styleSheet.textContent = styles;
       document.head.appendChild(styleSheet);
 
-      // Create modern widget HTML
+      // Create full-screen widget HTML (no floating button)
       container.innerHTML = `
         <div class="baseai-widget-container">
-          <div class="baseai-widget-chatbox" id="${this.containerId}-chatbox">
+          <div class="baseai-widget-chatbox open" id="${this.containerId}-chatbox">
             <div class="baseai-widget-header">
               <h3>${this.title}</h3>
               <button class="baseai-widget-close" id="${this.containerId}-close" aria-label="Close chat">
@@ -864,6 +790,7 @@
                 placeholder="Type your message..."
                 autocomplete="off"
                 aria-label="Message input"
+                inputmode="text"
               />
               <button class="baseai-widget-send" id="${this.containerId}-send" type="submit" aria-label="Send message">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
@@ -877,22 +804,16 @@
               <a href="https://a2abase.ai" target="_blank" rel="noopener noreferrer">A2ABase</a>
             </div>
           </div>
-          <button class="baseai-widget-button" id="${this.containerId}-button" aria-label="Open chat">
-            <svg viewBox="0 0 24 24" fill="currentColor">
-              <path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-2 12H6v-2h12v2zm0-3H6V9h12v2zm0-3H6V6h12v2z"/>
-            </svg>
-          </button>
         </div>
       `;
 
+      this.isOpen = true;
+
       // Attach event listeners
-      const button = document.getElementById(`${this.containerId}-button`);
       const closeBtn = document.getElementById(`${this.containerId}-close`);
       const sendBtn = document.getElementById(`${this.containerId}-send`);
       const input = document.getElementById(`${this.containerId}-input`);
-      const chatbox = document.getElementById(`${this.containerId}-chatbox`);
 
-      button.addEventListener('click', () => this.toggleChat());
       closeBtn.addEventListener('click', () => this.toggleChat());
       sendBtn.addEventListener('click', () => this.sendMessage());
       input.addEventListener('keypress', (e) => {
@@ -904,14 +825,14 @@
 
     toggleChat() {
       this.isOpen = !this.isOpen;
-      const chatbox = document.getElementById(`${this.containerId}-chatbox`);
-      if (chatbox) {
+      const container = document.querySelector(`#${this.containerId} .baseai-widget-container`);
+      if (container) {
         if (this.isOpen) {
-          chatbox.classList.add('open');
+          container.classList.remove('closed');
           const input = document.getElementById(`${this.containerId}-input`);
           if (input) input.focus();
         } else {
-          chatbox.classList.remove('open');
+          container.classList.add('closed');
         }
       }
     }
