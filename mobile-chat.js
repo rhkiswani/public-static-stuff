@@ -75,14 +75,22 @@
       '.mc-send:disabled{opacity:.5;cursor:not-allowed}',
       '.mc-send svg{width:20px;height:20px}',
       '.mc-markdown-content p{margin:0 0 6px}.mc-markdown-content p:last-child{margin:0}',
-      '.mc-function-calls{margin-top:10px;padding:10px;background:rgba(0,0,0,.06);border-radius:10px;font-size:13px}',
-      '.mc-function-calls-header{font-weight:600;color:#555;margin-bottom:8px}',
+      '.mc-function-calls{margin-top:12px;padding:12px;background:rgba(0,0,0,.06);border-radius:12px;border:1px solid rgba(0,0,0,.08);font-size:13px}',
+      '.mc-function-calls-header{display:flex;align-items:center;gap:8px;margin-bottom:8px;font-weight:600;color:#555;cursor:pointer;user-select:none}',
+      '.mc-function-calls-header:hover{color:#34aadc}',
+      '.mc-function-calls-icon{width:16px;height:16px;flex-shrink:0;transition:transform .2s}',
+      '.mc-function-calls-icon.collapsed{transform:rotate(-90deg)}',
       '.mc-function-calls-content{display:block}',
-      '.mc-function-call{margin-bottom:8px;padding:8px;background:#fff;border-radius:8px;border-left:3px solid #34aadc}',
+      '.mc-function-calls-content.collapsed{display:none}',
+      '.mc-function-call{margin-bottom:10px;padding:10px;background:#fff;border-radius:8px;border-left:3px solid #34aadc}',
       '.mc-function-call:last-child{margin-bottom:0}',
-      '.mc-function-name{font-weight:600;color:#34aadc;display:flex;align-items:center;flex-wrap:wrap;gap:4px}',
-      '.mc-function-icon{margin-right:4px}',
-      '.mc-function-param-preview{color:#666;font-weight:normal;font-size:12px}'
+      '.mc-function-name{font-weight:600;color:#34aadc;margin-bottom:6px;display:flex;align-items:center;flex-wrap:wrap;gap:6px}',
+      '.mc-function-icon{margin-right:6px}',
+      '.mc-function-param-preview{color:#666;font-weight:normal;font-size:12px;margin-left:4px}',
+      '.mc-function-params{margin-top:6px;padding-top:6px;border-top:1px solid rgba(0,0,0,.08)}',
+      '.mc-function-param{margin-bottom:4px;font-size:12px;color:#666}',
+      '.mc-function-param-name{font-weight:500;color:#555}',
+      '.mc-function-param-value{margin-left:8px;color:#333}'
     ].join('');
 
     var styleEl = document.createElement('style');
@@ -117,15 +125,27 @@
     return div.innerHTML;
   };
 
-  MobileChatWidget.prototype.preprocessTextOnlyTools = function(content) {
-    if (!content || typeof content !== 'string') return content || '';
-    content = content.replace(/<function_calls>\s*<invoke name="ask">\s*<parameter name="text">([\s\S]*?)<\/parameter>\s*<\/invoke>\s*<\/function_calls>/gi, '$1');
-    content = content.replace(/<function_calls>\s*<invoke name="complete">\s*<parameter name="text">([\s\S]*?)<\/parameter>\s*<\/invoke>\s*<\/function_calls>/gi, '$1');
-    return content;
-  };
-
+  // --- Tool/function calls (mirrored from widget.js, themed with mc-) ---
   MobileChatWidget.prototype.isNewXmlFormat = function(content) {
     return content && /<function_calls>[\s\S]*<invoke\s+name=/.test(content);
+  };
+
+  MobileChatWidget.prototype.parseParameterValue = function(value) {
+    var trimmed = (value && value.trim) ? value.trim() : String(value).trim();
+    if (trimmed.indexOf('{') === 0 || trimmed.indexOf('[') === 0) {
+      try {
+        return JSON.parse(trimmed);
+      } catch (e) {
+        return value;
+      }
+    }
+    if (trimmed.toLowerCase() === 'true') return true;
+    if (trimmed.toLowerCase() === 'false') return false;
+    if (/^-?\d+(\.\d+)?$/.test(trimmed)) {
+      var num = parseFloat(trimmed);
+      if (!isNaN(num)) return num;
+    }
+    return value;
   };
 
   MobileChatWidget.prototype.parseXmlToolCalls = function(content) {
@@ -143,7 +163,7 @@
         var paramRegex = /<parameter\s+name=["']([^"']+)["']>([\s\S]*?)<\/parameter>/gi;
         var paramMatch;
         while ((paramMatch = paramRegex.exec(invokeContent)) !== null) {
-          parameters[paramMatch[1]] = paramMatch[2].trim();
+          parameters[paramMatch[1]] = this.parseParameterValue(paramMatch[2].trim());
         }
         toolCalls.push({ functionName: functionName, parameters: parameters });
       }
@@ -151,11 +171,24 @@
     return toolCalls;
   };
 
+  MobileChatWidget.prototype.preprocessTextOnlyTools = function(content) {
+    if (!content || typeof content !== 'string') return content || '';
+    content = content.replace(/<function_calls>\s*<invoke name="ask">\s*<parameter name="text">([\s\S]*?)<\/parameter>\s*<\/invoke>\s*<\/function_calls>/gi, function(match) {
+      if (match.indexOf('<parameter name="attachments"') !== -1) return match;
+      return match.replace(/<function_calls>\s*<invoke name="ask">\s*<parameter name="text">([\s\S]*?)<\/parameter>\s*<\/invoke>\s*<\/function_calls>/gi, '$1');
+    });
+    content = content.replace(/<function_calls>\s*<invoke name="complete">\s*<parameter name="text">([\s\S]*?)<\/parameter>\s*<\/invoke>\s*<\/function_calls>/gi, function(match) {
+      if (match.indexOf('<parameter name="attachments"') !== -1) return match;
+      return match.replace(/<function_calls>\s*<invoke name="complete">\s*<parameter name="text">([\s\S]*?)<\/parameter>\s*<\/invoke>\s*<\/function_calls>/gi, '$1');
+    });
+    content = content.replace(/<function_calls>\s*<invoke name="present_presentation">[\s\S]*?<parameter name="text">([\s\S]*?)<\/parameter>[\s\S]*?<\/invoke>\s*<\/function_calls>/gi, '$1');
+    return content;
+  };
+
   MobileChatWidget.prototype.parseFunctionCalls = function(text) {
-    var raw = text || '';
-    var preprocessed = this.preprocessTextOnlyTools(raw);
-    if (!this.debug || !this.isNewXmlFormat(preprocessed)) {
-      var clean = preprocessed.replace(/<function_calls>[\s\S]*?<\/function_calls>/gi, ' ').replace(/\s+/g, ' ').trim();
+    var preprocessedText = this.preprocessTextOnlyTools(text || '');
+    if (!this.isNewXmlFormat(preprocessedText)) {
+      var clean = preprocessedText.replace(/<function_calls>[\s\S]*?<\/function_calls>/gi, ' ').replace(/\s+/g, ' ').trim();
       return { text: clean, functionCalls: null };
     }
     var functionCallsRegex = /<function_calls>([\s\S]*?)<\/function_calls>/gi;
@@ -163,23 +196,23 @@
     var lastIndex = 0;
     var textParts = [];
     var allFunctionCalls = [];
-    while ((match = functionCallsRegex.exec(preprocessed)) !== null) {
+    while ((match = functionCallsRegex.exec(preprocessedText)) !== null) {
       if (match.index > lastIndex) {
-        var textBefore = preprocessed.substring(lastIndex, match.index).trim();
+        var textBefore = preprocessedText.substring(lastIndex, match.index).trim();
         if (textBefore) textParts.push(textBefore);
       }
       var toolCalls = this.parseXmlToolCalls(match[0]);
       for (var i = 0; i < toolCalls.length; i++) {
         var tc = toolCalls[i];
-        var name = tc.functionName;
+        var name = tc.functionName.replace(/_/g, '-');
         if (name !== 'ask' && name !== 'complete' && name !== 'present-presentation') {
           allFunctionCalls.push(tc);
         }
       }
       lastIndex = match.index + match[0].length;
     }
-    if (lastIndex < preprocessed.length) {
-      var remaining = preprocessed.substring(lastIndex).trim();
+    if (lastIndex < preprocessedText.length) {
+      var remaining = preprocessedText.substring(lastIndex).trim();
       if (remaining) textParts.push(remaining);
     }
     var cleanText = textParts.join(' ').replace(/\s+/g, ' ').trim();
@@ -187,61 +220,131 @@
   };
 
   MobileChatWidget.prototype.getUserFriendlyToolName = function(toolName) {
-    var map = { 'execute-command': 'Executing Command', 'create-file': 'Creating File', 'delete-file': 'Deleting File', 'read-file': 'Reading File', 'web-search': 'Searching Web', 'web_search': 'Searching Web', 'browser-navigate-to': 'Navigating', 'browser-act': 'Performing Action', 'ask': 'Ask', 'complete': 'Completing Task' };
+    var toolNameMap = {
+      'execute-command': 'Executing Command',
+      'create-file': 'Creating File',
+      'delete-file': 'Deleting File',
+      'full-file-rewrite': 'Rewriting File',
+      'str-replace': 'Editing Text',
+      'edit-file': 'Editing File',
+      'read-file': 'Reading File',
+      'web-search': 'Searching Web',
+      'web_search': 'Searching Web',
+      'browser-navigate-to': 'Navigating to Page',
+      'browser-act': 'Performing Action',
+      'browser-extract-content': 'Extracting Content',
+      'browser-screenshot': 'Taking Screenshot',
+      'deploy-site': 'Deploying',
+      'ask': 'Ask',
+      'complete': 'Completing Task'
+    };
     if (toolName.indexOf('mcp-') === 0) {
       var parts = toolName.split('-');
       if (parts.length >= 3) {
-        var server = parts[1].charAt(0).toUpperCase() + parts[1].slice(1);
-        var toolPart = parts.slice(2).join('-').replace(/-/g, ' ').replace(/\b\w/g, function(c) { return c.toUpperCase(); });
-        return server + ': ' + toolPart;
+        var serverName = parts[1];
+        var toolNamePart = parts.slice(2).join('-');
+        var formattedServerName = serverName.charAt(0).toUpperCase() + serverName.slice(1);
+        var formattedToolName = toolNamePart.split('-').map(function(word) {
+          return word.charAt(0).toUpperCase() + word.slice(1);
+        }).join(' ');
+        return formattedServerName + ': ' + formattedToolName;
       }
     }
-    if (map[toolName]) return map[toolName];
-    return toolName.split('-').map(function(w) { return w.charAt(0).toUpperCase() + w.slice(1); }).join(' ');
+    if (toolNameMap[toolName]) return toolNameMap[toolName];
+    return toolName.split('-').map(function(word) {
+      return word.charAt(0).toUpperCase() + word.slice(1);
+    }).join(' ');
+  };
+
+  MobileChatWidget.prototype.extractPrimaryParam = function(toolCall) {
+    var params = toolCall.parameters;
+    if (params.file_path) return params.file_path;
+    if (params.command) return params.command;
+    if (params.query) return params.query;
+    if (params.url) return params.url;
+    if (params.target_file) return params.target_file;
+    return null;
   };
 
   MobileChatWidget.prototype.getToolIcon = function(toolName) {
-    var iconMap = { 'execute-command': '\u26a1', 'create-file': '\u1f4c4', 'delete-file': '\u1f5d1', 'read-file': '\u1f4d6', 'web-search': '\u1f50d', 'web_search': '\u1f50d', 'browser-navigate-to': '\u1f310', 'deploy-site': '\u1f680' };
+    var iconMap = {
+      'execute-command': '\u26a1',
+      'create-file': '\u1f4c4',
+      'delete-file': '\u1f5d1',
+      'edit-file': '\u270f\ufe0f',
+      'read-file': '\u1f4d6',
+      'web-search': '\u1f50d',
+      'web_search': '\u1f50d',
+      'browser-navigate-to': '\u1f310',
+      'browser-act': '\u1f5b1\ufe0f',
+      'browser-extract-content': '\u1f4cb',
+      'browser-screenshot': '\u1f4f8',
+      'deploy-site': '\u1f680'
+    };
     if (toolName.indexOf('mcp-') === 0) return '\u1f50c';
     return iconMap[toolName] || '\u2699\ufe0f';
   };
 
-  MobileChatWidget.prototype.extractPrimaryParam = function(toolCall) {
-    var p = toolCall.parameters;
-    if (p.file_path) return p.file_path;
-    if (p.command) return p.command;
-    if (p.query) return p.query;
-    if (p.url) return p.url;
-    if (p.target_file) return p.target_file;
-    if (p.text) return p.text;
-    return null;
-  };
-
   MobileChatWidget.prototype.createFunctionCallsElement = function(functionCalls) {
+    var self = this;
     var container = document.createElement('div');
     container.className = 'mc-function-calls';
     var header = document.createElement('div');
     header.className = 'mc-function-calls-header';
-    header.textContent = functionCalls.length + ' tool call' + (functionCalls.length !== 1 ? 's' : '');
-    container.appendChild(header);
+    header.innerHTML = '<svg class="mc-function-calls-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg><span>' + functionCalls.length + ' tool call' + (functionCalls.length !== 1 ? 's' : '') + '</span>';
     var content = document.createElement('div');
     content.className = 'mc-function-calls-content';
     for (var i = 0; i < functionCalls.length; i++) {
-      var tc = functionCalls[i];
-      var friendly = this.getUserFriendlyToolName(tc.functionName);
-      var primary = this.extractPrimaryParam(tc);
-      var callDiv = document.createElement('div');
-      callDiv.className = 'mc-function-call';
+      var toolCall = functionCalls[i];
+      var toolName = toolCall.functionName;
+      var friendlyName = this.getUserFriendlyToolName(toolName);
+      var primaryParam = this.extractPrimaryParam(toolCall);
+      var funcDiv = document.createElement('div');
+      funcDiv.className = 'mc-function-call';
       var nameDiv = document.createElement('div');
       nameDiv.className = 'mc-function-name';
-      nameDiv.innerHTML = '<span class="mc-function-icon">' + this.getToolIcon(tc.functionName) + '</span> ' + this.escapeHtml(friendly);
-      if (primary) {
-        var display = String(primary).length > 48 ? String(primary).substring(0, 45) + '...' : String(primary);
-        nameDiv.innerHTML += ' <span class="mc-function-param-preview">' + this.escapeHtml(display) + '</span>';
+      nameDiv.innerHTML = '<span class="mc-function-icon">' + this.getToolIcon(toolName) + '</span>' + this.escapeHtml(friendlyName);
+      if (primaryParam !== undefined && primaryParam !== null) {
+        var paramDisplay = typeof primaryParam === 'string' && primaryParam.length > 50 ? primaryParam.substring(0, 47) + '...' : String(primaryParam);
+        nameDiv.innerHTML += ' <span class="mc-function-param-preview">' + this.escapeHtml(paramDisplay) + '</span>';
       }
-      callDiv.appendChild(nameDiv);
-      content.appendChild(callDiv);
+      var paramsDiv = document.createElement('div');
+      paramsDiv.className = 'mc-function-params';
+      var otherParams = [];
+      var paramKeys = Object.keys(toolCall.parameters || {});
+      for (var k = 0; k < paramKeys.length; k++) {
+        var pname = paramKeys[k];
+        if (primaryParam !== undefined && primaryParam !== null && (pname === 'file_path' || pname === 'command' || pname === 'query' || pname === 'url' || pname === 'target_file')) continue;
+        otherParams.push([pname, toolCall.parameters[pname]]);
+      }
+      if (otherParams.length > 0) {
+        for (var j = 0; j < otherParams.length; j++) {
+          var paramDiv = document.createElement('div');
+          paramDiv.className = 'mc-function-param';
+          var displayValue = typeof otherParams[j][1] === 'object' ? JSON.stringify(otherParams[j][1], null, 2) : String(otherParams[j][1]);
+          paramDiv.innerHTML = '<span class="mc-function-param-name">' + this.escapeHtml(otherParams[j][0]) + ':</span> <span class="mc-function-param-value">' + this.escapeHtml(displayValue) + '</span>';
+          paramsDiv.appendChild(paramDiv);
+        }
+      }
+      funcDiv.appendChild(nameDiv);
+      if (otherParams.length > 0) funcDiv.appendChild(paramsDiv);
+      content.appendChild(funcDiv);
     }
+    var isCollapsed = false;
+    header.addEventListener('click', function() {
+      isCollapsed = !isCollapsed;
+      var icon = header.querySelector('.mc-function-calls-icon');
+      if (icon) {
+        if (isCollapsed) {
+          icon.classList.add('collapsed');
+          content.classList.add('collapsed');
+        } else {
+          icon.classList.remove('collapsed');
+          content.classList.remove('collapsed');
+        }
+      }
+    });
+    container.appendChild(header);
     container.appendChild(content);
     return container;
   };
