@@ -1,340 +1,1713 @@
 (function() {
   'use strict';
 
-  var MOBILE_MAX_WIDTH = 640;
-
-  function isMobile() {
-    return typeof window !== 'undefined' && window.innerWidth <= MOBILE_MAX_WIDTH;
-  }
-
-  // Mobile Chat Widget - Telegram-style, mobile only
-  function MobileChatWidget(config) {
-    this.apiKey = config.apiKey;
-    this.agentId = config.agentId;
-    this.apiUrl = config.apiUrl || (window.location && window.location.origin ? window.location.origin.replace(':3000', ':8000') : '');
-    this.containerId = config.containerId || 'mobile-chat-' + config.agentId;
-    this.title = config.title || 'Chat';
-    this.debug = config.debug || false;
-    this.threadId = null;
-    this.messages = [];
-    this.agentData = null;
-
-    this.init();
-  }
-
-  MobileChatWidget.prototype.init = function() {
-    this.createWidget();
-    this.loadAgentData().then(function() {
-      this.loadThread();
-    }.bind(this));
-  };
-
-  MobileChatWidget.prototype.createWidget = function() {
-    var container = document.getElementById(this.containerId);
-    if (!container) {
-      container = document.createElement('div');
-      container.id = this.containerId;
-      document.body.appendChild(container);
+  // BaseAI Chat Widget — Telegram theme
+  class BaseAIChatWidget {
+    constructor(config) {
+      this.apiKey = config.apiKey;
+      this.agentId = config.agentId;
+      this.apiUrl = config.apiUrl || window.location.origin.replace(':3000', ':8000');
+      this.containerId = config.containerId || `baseai-widget-${config.agentId}`;
+      this.title = config.title || 'AI Assistant';
+      this.debug = config.debug || config.showDebug || false;
+      this.threadId = null;
+      this.isOpen = false;
+      this.messages = [];
+      this.agentData = null; // Store agent data for greeting message
+      
+      // Storage keys for persistence
+      this.storageKey = `baseai-widget-${this.agentId}`;
+      this.threadStorageKey = `baseai-widget-thread-${this.agentId}`;
+      
+      this.init();
     }
 
-    var styles = [
-      '*{box-sizing:border-box}',
-      '.mc-root{position:fixed;inset:0;z-index:999999;display:flex;flex-direction:column;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#e4ddd6}',
-      '.mc-header{background:#f0f0f0;padding:12px 16px;padding-top:calc(12px + env(safe-area-inset-top));display:flex;align-items:center;gap:12px;border-bottom:1px solid #e0e0e0;min-height:56px}',
-      '.mc-header-title{flex:1;font-size:17px;font-weight:600;color:#000;margin:0}',
-      '.mc-messages{flex:1;overflow-y:auto;overflow-x:hidden;padding:8px 12px;-webkit-overflow-scrolling:touch;scroll-behavior:smooth}',
-      '.mc-msg{display:flex;margin-bottom:4px;clear:both}',
-      '.mc-msg.user{justify-content:flex-end}',
-      '.mc-msg.assistant{justify-content:flex-start}',
-      '.mc-bubble{max-width:85%;padding:8px 12px;border-radius:12px;font-size:15px;line-height:1.4;word-wrap:break-word;position:relative}',
-      '.mc-msg.user .mc-bubble{background:#effdde;border-top-right-radius:4px;box-shadow:0 1px 2px rgba(0,0,0,.07)}',
-      '.mc-msg.assistant .mc-bubble{background:#fff;border-top-left-radius:4px;box-shadow:0 1px 2px rgba(0,0,0,.1)}',
-      '.mc-bubble .mc-p{margin:0 0 8px 0;line-height:1.5}.mc-bubble .mc-p:last-child{margin-bottom:0}',
-      '.mc-bubble .mc-h1{font-size:1.15em;font-weight:700;margin:10px 0 6px 0;line-height:1.3}',
-      '.mc-bubble .mc-h2{font-size:1.08em;font-weight:600;margin:8px 0 4px 0;line-height:1.3}',
-      '.mc-bubble .mc-h3{font-size:1em;font-weight:600;margin:6px 0 4px 0;line-height:1.3}',
-      '.mc-bubble .mc-ul,.mc-bubble .mc-ol{margin:6px 0;padding-left:1.25em}',
-      '.mc-bubble .mc-ul{list-style-type:disc}.mc-bubble .mc-ol{list-style-type:decimal}',
-      '.mc-bubble .mc-li{margin:2px 0;line-height:1.45}',
-      '.mc-bubble .mc-blockquote{border-left:3px solid rgba(0,0,0,.15);padding-left:10px;margin:6px 0;color:rgba(0,0,0,.75);font-style:italic}',
-      '.mc-bubble .mc-hr{border:none;border-top:1px solid rgba(0,0,0,.1);margin:8px 0}',
-      '.mc-bubble .mc-link{color:#2481cc;text-decoration:none}',
-      '.mc-bubble .mc-link:hover{text-decoration:underline}',
-      '.mc-bubble .mc-img{max-width:100%;height:auto;border-radius:8px;margin:6px 0;display:block}',
-      '.mc-bubble .mc-inline-code,.mc-bubble .mc-code{background:rgba(0,0,0,.08);padding:2px 6px;border-radius:4px;font-size:0.9em;font-family:ui-monospace,monospace}',
-      '.mc-bubble .mc-pre{background:rgba(0,0,0,.06);padding:10px 12px;border-radius:8px;overflow-x:auto;margin:8px 0;font-size:13px;line-height:1.4}',
-      '.mc-bubble .mc-pre .mc-code{padding:0;background:transparent;font-size:inherit}',
-      '.mc-bubble .mc-strong{font-weight:600}.mc-bubble .mc-em{font-style:italic}',
-      '.mc-loading{display:inline-flex;align-items:center;gap:6px;padding:8px 12px}',
-      '.mc-loading span{width:6px;height:6px;border-radius:50%;background:#999;animation:mc-blink 1.2s ease-in-out infinite both}',
-      '.mc-loading span:nth-child(2){animation-delay:.2s}.mc-loading span:nth-child(3){animation-delay:.4s}',
-      '@keyframes mc-blink{0%,80%,100%{opacity:.4;transform:scale(1)}40%{opacity:1;transform:scale(1.1)}}',
-      '.mc-input-row{background:#f0f0f0;padding:8px 12px;padding-bottom:calc(8px + env(safe-area-inset-bottom));display:flex;gap:8px;align-items:center;border-top:1px solid #e0e0e0}',
-      '.mc-input{flex:1;border:none;border-radius:20px;padding:10px 16px;font-size:16px;background:#fff;outline:none;min-height:40px;-webkit-appearance:none}',
-      '.mc-send{width:40px;height:40px;border-radius:50%;border:none;background:#34aadc;color:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0}',
-      '.mc-send:disabled{opacity:.5;cursor:not-allowed}',
-      '.mc-send svg{width:20px;height:20px}',
-      '.mc-markdown-content p{margin:0 0 6px}.mc-markdown-content p:last-child{margin:0}',
-      '.mc-function-calls{margin-top:12px;padding:12px;background:rgba(0,0,0,.06);border-radius:12px;border:1px solid rgba(0,0,0,.08);font-size:13px}',
-      '.mc-function-calls-header{display:flex;align-items:center;gap:8px;margin-bottom:8px;font-weight:600;color:#555;cursor:pointer;user-select:none}',
-      '.mc-function-calls-header:hover{color:#34aadc}',
-      '.mc-function-calls-icon{width:16px;height:16px;flex-shrink:0;transition:transform .2s}',
-      '.mc-function-calls-icon.collapsed{transform:rotate(-90deg)}',
-      '.mc-function-calls-content{display:block}',
-      '.mc-function-calls-content.collapsed{display:none}',
-      '.mc-function-call{margin-bottom:10px;padding:10px;background:#fff;border-radius:8px;border-left:3px solid #34aadc}',
-      '.mc-function-call:last-child{margin-bottom:0}',
-      '.mc-function-name{font-weight:600;color:#34aadc;margin-bottom:6px;display:flex;align-items:center;flex-wrap:wrap;gap:6px}',
-      '.mc-function-icon{margin-right:6px}',
-      '.mc-function-param-preview{color:#666;font-weight:normal;font-size:12px;margin-left:4px}',
-      '.mc-function-params{margin-top:6px;padding-top:6px;border-top:1px solid rgba(0,0,0,.08)}',
-      '.mc-function-param{margin-bottom:4px;font-size:12px;color:#666}',
-      '.mc-function-param-name{font-weight:500;color:#555}',
-      '.mc-function-param-value{margin-left:8px;color:#333}'
-    ].join('');
+    async init() {
+      this.createWidget();
+      this.loadSavedData();
+      await this.loadAgentData();
+      await this.loadThread();
+    }
 
-    var styleEl = document.createElement('style');
-    styleEl.textContent = styles;
-    document.head.appendChild(styleEl);
-
-    container.innerHTML =
-      '<div class="mc-root">' +
-        '<div class="mc-header">' +
-          '<h1 class="mc-header-title">' + this.escapeHtml(this.title) + '</h1>' +
-        '</div>' +
-        '<div class="mc-messages" id="' + this.containerId + '-messages"></div>' +
-        '<div class="mc-input-row">' +
-          '<input type="text" class="mc-input" id="' + this.containerId + '-input" placeholder="Message" autocomplete="off" />' +
-          '<button type="button" class="mc-send" id="' + this.containerId + '-send" aria-label="Send">' +
-            '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg>' +
-          '</button>' +
-        '</div>' +
-      '</div>';
-
-    var self = this;
-    document.getElementById(this.containerId + '-send').addEventListener('click', function() { self.sendMessage(); });
-    document.getElementById(this.containerId + '-input').addEventListener('keypress', function(e) {
-      if (e.key === 'Enter') self.sendMessage();
-    });
-  };
-
-  MobileChatWidget.prototype.escapeHtml = function(text) {
-    if (!text) return '';
-    var div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
-  };
-
-  // --- Tool/function calls (mirrored from widget.js, themed with mc-) ---
-  MobileChatWidget.prototype.isNewXmlFormat = function(content) {
-    return content && /<function_calls>[\s\S]*<invoke\s+name=/.test(content);
-  };
-
-  MobileChatWidget.prototype.parseParameterValue = function(value) {
-    var trimmed = (value && value.trim) ? value.trim() : String(value).trim();
-    if (trimmed.indexOf('{') === 0 || trimmed.indexOf('[') === 0) {
+    // Load saved threadId and messages from localStorage
+    loadSavedData() {
       try {
-        return JSON.parse(trimmed);
-      } catch (e) {
-        return value;
-      }
-    }
-    if (trimmed.toLowerCase() === 'true') return true;
-    if (trimmed.toLowerCase() === 'false') return false;
-    if (/^-?\d+(\.\d+)?$/.test(trimmed)) {
-      var num = parseFloat(trimmed);
-      if (!isNaN(num)) return num;
-    }
-    return value;
-  };
-
-  MobileChatWidget.prototype.parseXmlToolCalls = function(content) {
-    var toolCalls = [];
-    var functionCallsRegex = /<function_calls>([\s\S]*?)<\/function_calls>/gi;
-    var functionCallsMatch;
-    while ((functionCallsMatch = functionCallsRegex.exec(content)) !== null) {
-      var functionCallsContent = functionCallsMatch[1];
-      var invokeRegex = /<invoke\s+name=["']([^"']+)["']>([\s\S]*?)<\/invoke>/gi;
-      var invokeMatch;
-      while ((invokeMatch = invokeRegex.exec(functionCallsContent)) !== null) {
-        var functionName = invokeMatch[1].replace(/_/g, '-');
-        var invokeContent = invokeMatch[2];
-        var parameters = {};
-        var paramRegex = /<parameter\s+name=["']([^"']+)["']>([\s\S]*?)<\/parameter>/gi;
-        var paramMatch;
-        while ((paramMatch = paramRegex.exec(invokeContent)) !== null) {
-          parameters[paramMatch[1]] = this.parseParameterValue(paramMatch[2].trim());
+        // Load threadId
+        const savedThreadId = localStorage.getItem(this.threadStorageKey);
+        if (savedThreadId) {
+          this.threadId = savedThreadId;
+          if (this.debug) {
+            console.log('BaseAI Widget: Loaded saved threadId:', this.threadId);
+          }
         }
-        toolCalls.push({ functionName: functionName, parameters: parameters });
-      }
-    }
-    return toolCalls;
-  };
 
-  MobileChatWidget.prototype.preprocessTextOnlyTools = function(content) {
-    if (!content || typeof content !== 'string') return content || '';
-    content = content.replace(/<function_calls>\s*<invoke name="ask">\s*<parameter name="text">([\s\S]*?)<\/parameter>\s*<\/invoke>\s*<\/function_calls>/gi, function(match) {
-      if (match.indexOf('<parameter name="attachments"') !== -1) return match;
-      return match.replace(/<function_calls>\s*<invoke name="ask">\s*<parameter name="text">([\s\S]*?)<\/parameter>\s*<\/invoke>\s*<\/function_calls>/gi, '$1');
-    });
-    content = content.replace(/<function_calls>\s*<invoke name="complete">\s*<parameter name="text">([\s\S]*?)<\/parameter>\s*<\/invoke>\s*<\/function_calls>/gi, function(match) {
-      if (match.indexOf('<parameter name="attachments"') !== -1) return match;
-      return match.replace(/<function_calls>\s*<invoke name="complete">\s*<parameter name="text">([\s\S]*?)<\/parameter>\s*<\/invoke>\s*<\/function_calls>/gi, '$1');
-    });
-    content = content.replace(/<function_calls>\s*<invoke name="present_presentation">[\s\S]*?<parameter name="text">([\s\S]*?)<\/parameter>[\s\S]*?<\/invoke>\s*<\/function_calls>/gi, '$1');
-    return content;
-  };
-
-  MobileChatWidget.prototype.parseFunctionCalls = function(text) {
-    var preprocessedText = this.preprocessTextOnlyTools(text || '');
-    if (!this.isNewXmlFormat(preprocessedText)) {
-      var clean = preprocessedText.replace(/<function_calls>[\s\S]*?<\/function_calls>/gi, ' ').replace(/\s+/g, ' ').trim();
-      return { text: clean, functionCalls: null };
-    }
-    var functionCallsRegex = /<function_calls>([\s\S]*?)<\/function_calls>/gi;
-    var match;
-    var lastIndex = 0;
-    var textParts = [];
-    var allFunctionCalls = [];
-    while ((match = functionCallsRegex.exec(preprocessedText)) !== null) {
-      if (match.index > lastIndex) {
-        var textBefore = preprocessedText.substring(lastIndex, match.index).trim();
-        if (textBefore) textParts.push(textBefore);
-      }
-      var toolCalls = this.parseXmlToolCalls(match[0]);
-      for (var i = 0; i < toolCalls.length; i++) {
-        var tc = toolCalls[i];
-        var name = tc.functionName.replace(/_/g, '-');
-        if (name !== 'ask' && name !== 'complete' && name !== 'present-presentation') {
-          allFunctionCalls.push(tc);
+        // Load messages
+        const savedMessages = localStorage.getItem(this.storageKey);
+        if (savedMessages) {
+          this.messages = JSON.parse(savedMessages);
+          if (this.debug) {
+            console.log('BaseAI Widget: Loaded', this.messages.length, 'saved messages');
+          }
+        }
+      } catch (error) {
+        if (this.debug) {
+          console.error('BaseAI Widget: Failed to load saved data', error);
         }
       }
-      lastIndex = match.index + match[0].length;
     }
-    if (lastIndex < preprocessedText.length) {
-      var remaining = preprocessedText.substring(lastIndex).trim();
-      if (remaining) textParts.push(remaining);
-    }
-    var cleanText = textParts.join(' ').replace(/\s+/g, ' ').trim();
-    return { text: cleanText, functionCalls: allFunctionCalls.length > 0 ? allFunctionCalls : null };
-  };
 
-  MobileChatWidget.prototype.getUserFriendlyToolName = function(toolName) {
-    var toolNameMap = {
-      'execute-command': 'Executing Command',
-      'create-file': 'Creating File',
-      'delete-file': 'Deleting File',
-      'full-file-rewrite': 'Rewriting File',
-      'str-replace': 'Editing Text',
-      'edit-file': 'Editing File',
-      'read-file': 'Reading File',
-      'web-search': 'Searching Web',
-      'web_search': 'Searching Web',
-      'browser-navigate-to': 'Navigating to Page',
-      'browser-act': 'Performing Action',
-      'browser-extract-content': 'Extracting Content',
-      'browser-screenshot': 'Taking Screenshot',
-      'deploy-site': 'Deploying',
-      'ask': 'Ask',
-      'complete': 'Completing Task'
-    };
-    if (toolName.indexOf('mcp-') === 0) {
-      var parts = toolName.split('-');
-      if (parts.length >= 3) {
-        var serverName = parts[1];
-        var toolNamePart = parts.slice(2).join('-');
-        var formattedServerName = serverName.charAt(0).toUpperCase() + serverName.slice(1);
-        var formattedToolName = toolNamePart.split('-').map(function(word) {
-          return word.charAt(0).toUpperCase() + word.slice(1);
-        }).join(' ');
-        return formattedServerName + ': ' + formattedToolName;
-      }
-    }
-    if (toolNameMap[toolName]) return toolNameMap[toolName];
-    return toolName.split('-').map(function(word) {
-      return word.charAt(0).toUpperCase() + word.slice(1);
-    }).join(' ');
-  };
-
-  MobileChatWidget.prototype.extractPrimaryParam = function(toolCall) {
-    var params = toolCall.parameters;
-    if (params.file_path) return params.file_path;
-    if (params.command) return params.command;
-    if (params.query) return params.query;
-    if (params.url) return params.url;
-    if (params.target_file) return params.target_file;
-    return null;
-  };
-
-  MobileChatWidget.prototype.getToolIcon = function(toolName) {
-    var iconMap = {
-      'execute-command': '\u26a1',
-      'create-file': '\u1f4c4',
-      'delete-file': '\u1f5d1',
-      'edit-file': '\u270f\ufe0f',
-      'read-file': '\u1f4d6',
-      'web-search': '\u1f50d',
-      'web_search': '\u1f50d',
-      'browser-navigate-to': '\u1f310',
-      'browser-act': '\u1f5b1\ufe0f',
-      'browser-extract-content': '\u1f4cb',
-      'browser-screenshot': '\u1f4f8',
-      'deploy-site': '\u1f680'
-    };
-    if (toolName.indexOf('mcp-') === 0) return '\u1f50c';
-    return iconMap[toolName] || '\u2699\ufe0f';
-  };
-
-  MobileChatWidget.prototype.createFunctionCallsElement = function(functionCalls) {
-    var self = this;
-    var container = document.createElement('div');
-    container.className = 'mc-function-calls';
-    var header = document.createElement('div');
-    header.className = 'mc-function-calls-header';
-    header.innerHTML = '<svg class="mc-function-calls-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg><span>' + functionCalls.length + ' tool call' + (functionCalls.length !== 1 ? 's' : '') + '</span>';
-    var content = document.createElement('div');
-    content.className = 'mc-function-calls-content';
-    for (var i = 0; i < functionCalls.length; i++) {
-      var toolCall = functionCalls[i];
-      var toolName = toolCall.functionName;
-      var friendlyName = this.getUserFriendlyToolName(toolName);
-      var primaryParam = this.extractPrimaryParam(toolCall);
-      var funcDiv = document.createElement('div');
-      funcDiv.className = 'mc-function-call';
-      var nameDiv = document.createElement('div');
-      nameDiv.className = 'mc-function-name';
-      nameDiv.innerHTML = '<span class="mc-function-icon">' + this.getToolIcon(toolName) + '</span>' + this.escapeHtml(friendlyName);
-      if (primaryParam !== undefined && primaryParam !== null) {
-        var paramDisplay = typeof primaryParam === 'string' && primaryParam.length > 50 ? primaryParam.substring(0, 47) + '...' : String(primaryParam);
-        nameDiv.innerHTML += ' <span class="mc-function-param-preview">' + this.escapeHtml(paramDisplay) + '</span>';
-      }
-      var paramsDiv = document.createElement('div');
-      paramsDiv.className = 'mc-function-params';
-      var otherParams = [];
-      var paramKeys = Object.keys(toolCall.parameters || {});
-      for (var k = 0; k < paramKeys.length; k++) {
-        var pname = paramKeys[k];
-        if (primaryParam !== undefined && primaryParam !== null && (pname === 'file_path' || pname === 'command' || pname === 'query' || pname === 'url' || pname === 'target_file')) continue;
-        otherParams.push([pname, toolCall.parameters[pname]]);
-      }
-      if (otherParams.length > 0) {
-        for (var j = 0; j < otherParams.length; j++) {
-          var paramDiv = document.createElement('div');
-          paramDiv.className = 'mc-function-param';
-          var displayValue = typeof otherParams[j][1] === 'object' ? JSON.stringify(otherParams[j][1], null, 2) : String(otherParams[j][1]);
-          paramDiv.innerHTML = '<span class="mc-function-param-name">' + this.escapeHtml(otherParams[j][0]) + ':</span> <span class="mc-function-param-value">' + this.escapeHtml(displayValue) + '</span>';
-          paramsDiv.appendChild(paramDiv);
+    // Save messages to localStorage
+    saveMessages() {
+      try {
+        localStorage.setItem(this.storageKey, JSON.stringify(this.messages));
+      } catch (error) {
+        if (this.debug) {
+          console.error('BaseAI Widget: Failed to save messages', error);
         }
       }
-      funcDiv.appendChild(nameDiv);
-      if (otherParams.length > 0) funcDiv.appendChild(paramsDiv);
-      content.appendChild(funcDiv);
     }
-    var isCollapsed = false;
-    header.addEventListener('click', function() {
-      isCollapsed = !isCollapsed;
-      var icon = header.querySelector('.mc-function-calls-icon');
-      if (icon) {
+
+    // Save threadId to localStorage
+    saveThreadId() {
+      try {
+        if (this.threadId) {
+          localStorage.setItem(this.threadStorageKey, this.threadId);
+        }
+      } catch (error) {
+        if (this.debug) {
+          console.error('BaseAI Widget: Failed to save threadId', error);
+        }
+      }
+    }
+
+    createWidget() {
+      let container = document.getElementById(this.containerId);
+      if (!container) {
+        container = document.createElement('div');
+        container.id = this.containerId;
+        document.body.appendChild(container);
+        if (this.debug) {
+          console.log('BaseAI Widget: Auto-created container', this.containerId);
+        }
+      }
+
+      // Create modern mobile-first widget styles with awesome design
+      const styles = `
+        * {
+          box-sizing: border-box;
+        }
+        .baseai-widget-container {
+          position: fixed;
+          bottom: 0;
+          right: 0;
+          left: 0;
+          z-index: 999999;
+          font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+          pointer-events: none;
+        }
+        .baseai-widget-button {
+          position: fixed;
+          bottom: 20px;
+          right: 20px;
+          width: 64px;
+          height: 64px;
+          border-radius: 50%;
+          background: #0088cc;
+          border: none;
+          cursor: pointer;
+          box-shadow: 0 8px 24px rgba(0, 136, 204, 0.4), 0 4px 8px rgba(0, 0, 0, 0.1);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+          pointer-events: auto;
+          z-index: 1000000;
+          position: relative;
+          overflow: hidden;
+        }
+        @media (prefers-color-scheme: dark) {
+          .baseai-widget-button {
+            background: #2b5278;
+          }
+        }
+        .baseai-widget-button::before {
+          content: '';
+          position: absolute;
+          top: 50%;
+          left: 50%;
+          width: 0;
+          height: 0;
+          border-radius: 50%;
+          background: rgba(255, 255, 255, 0.2);
+          transform: translate(-50%, -50%);
+          transition: width 0.6s, height 0.6s;
+        }
+        .baseai-widget-button:hover::before {
+          width: 300px;
+          height: 300px;
+        }
+        .baseai-widget-button:hover {
+          transform: scale(1.05);
+          background: #006699;
+          box-shadow: 0 12px 32px rgba(0, 136, 204, 0.5), 0 6px 12px rgba(0, 0, 0, 0.15);
+        }
+        @media (prefers-color-scheme: dark) {
+          .baseai-widget-button:hover {
+            background: #006699;
+          }
+        }
+        .baseai-widget-button:active {
+          transform: scale(0.95);
+        }
+        .baseai-widget-button svg {
+          width: 28px;
+          height: 28px;
+          fill: white;
+          filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.2));
+          position: relative;
+          z-index: 1;
+          transition: transform 0.3s;
+        }
+        .baseai-widget-button:hover svg {
+          transform: scale(1.05);
+        }
+        .baseai-widget-chatbox {
+          position: fixed;
+          bottom: 0;
+          right: 0;
+          left: 0;
+          top: 0;
+          background: #ffffff;
+          display: flex;
+          flex-direction: column;
+          overflow: hidden;
+          transform: translateY(100%) scale(0.9);
+          opacity: 0;
+          transition: transform 0.4s cubic-bezier(0.4, 0, 0.2, 1), 
+                      opacity 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+          pointer-events: auto;
+          z-index: 1000001;
+        }
+        @media (prefers-color-scheme: dark) {
+          .baseai-widget-chatbox {
+            background: #17212b;
+          }
+        }
+        .baseai-widget-chatbox.open {
+          transform: translateY(0) scale(1);
+          opacity: 1;
+        }
+        .baseai-widget-header {
+          background: #0088cc;
+          color: white;
+          padding: 20px 24px;
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+          min-height: 72px;
+          position: relative;
+        }
+        @media (prefers-color-scheme: dark) {
+          .baseai-widget-header {
+            background: #2b5278;
+          }
+        }
+        .baseai-widget-header h3 {
+          margin: 0;
+          font-size: 20px;
+          font-weight: 600;
+          letter-spacing: -0.02em;
+        }
+        .baseai-widget-close {
+          background: rgba(255, 255, 255, 0.2);
+          border: none;
+          color: white;
+          cursor: pointer;
+          padding: 10px;
+          width: 40px;
+          height: 40px;
+          border-radius: 50%;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          transition: all 0.2s;
+        }
+        .baseai-widget-close:hover {
+          background: rgba(255, 255, 255, 0.3);
+          transform: rotate(90deg);
+        }
+        .baseai-widget-close svg {
+          width: 20px;
+          height: 20px;
+          stroke: white;
+          stroke-width: 2.5;
+        }
+        .baseai-widget-messages {
+          flex: 1;
+          overflow-y: auto;
+          padding: 16px 12px;
+          background: #e8e8e8;
+          -webkit-overflow-scrolling: touch;
+          scroll-behavior: smooth;
+        }
+        @media (min-width: 768px) {
+          .baseai-widget-messages {
+            padding: 20px 20px;
+          }
+        }
+        @media (prefers-color-scheme: dark) {
+          .baseai-widget-messages {
+            background: #17212b;
+          }
+        }
+        .baseai-widget-messages::-webkit-scrollbar {
+          width: 4px;
+        }
+        .baseai-widget-messages::-webkit-scrollbar-track {
+          background: transparent;
+        }
+        .baseai-widget-messages::-webkit-scrollbar-thumb {
+          background: #cbd5e1;
+          border-radius: 2px;
+        }
+        .baseai-widget-messages::-webkit-scrollbar-thumb:hover {
+          background: #94a3b8;
+        }
+        .baseai-widget-message {
+          margin-bottom: 8px;
+          display: flex;
+          flex-direction: column;
+          animation: messageSlideIn 0.3s ease-out;
+        }
+        @media (min-width: 768px) {
+          .baseai-widget-message {
+            margin-bottom: 12px;
+          }
+        }
+        @keyframes messageSlideIn {
+          from {
+            opacity: 0;
+            transform: translateY(10px);
+          }
+          to {
+            opacity: 1;
+            transform: translateY(0);
+          }
+        }
+        .baseai-widget-message.user {
+          align-items: flex-end;
+        }
+        .baseai-widget-message.assistant {
+          align-items: flex-start;
+        }
+        .baseai-widget-message-bubble {
+          max-width: 85%;
+          padding: 12px 16px;
+          border-radius: 24px;
+          word-wrap: break-word;
+          line-height: 1.6;
+          font-size: 15px;
+          position: relative;
+        }
+        @media (min-width: 768px) {
+          .baseai-widget-message-bubble {
+            max-width: 75%;
+            padding: 14px 20px;
+          }
+        }
+        .baseai-widget-message.user .baseai-widget-message-bubble {
+          background: #effdde;
+          color: #1e293b;
+          border-bottom-right-radius: 4px;
+          box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+        }
+        @media (prefers-color-scheme: dark) {
+          .baseai-widget-message.user .baseai-widget-message-bubble {
+            background: #2b5278;
+            color: #e4edfd;
+          }
+        }
+        .baseai-widget-message.assistant .baseai-widget-message-bubble {
+          background: white;
+          color: #1e293b;
+          border: 1px solid #e2e8f0;
+          border-bottom-left-radius: 4px;
+          box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+        }
+        @media (prefers-color-scheme: dark) {
+          .baseai-widget-message.assistant .baseai-widget-message-bubble {
+            background: #182533;
+            color: #e4edfd;
+            border-color: #2b5278;
+          }
+        }
+        .baseai-widget-function-calls {
+          margin-top: 12px;
+          padding: 12px;
+          background: #f1f5f9;
+          border-radius: 12px;
+          border: 1px solid #e2e8f0;
+          font-size: 13px;
+        }
+        @media (prefers-color-scheme: dark) {
+          .baseai-widget-function-calls {
+            background: #182533;
+            border-color: #2b5278;
+          }
+        }
+        .baseai-widget-function-calls-header {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          margin-bottom: 8px;
+          font-weight: 600;
+          color: #475569;
+          cursor: pointer;
+          user-select: none;
+        }
+        .baseai-widget-function-calls-header:hover {
+          color: #0088cc;
+        }
+        .baseai-widget-function-calls-icon {
+          width: 16px;
+          height: 16px;
+          transition: transform 0.2s;
+        }
+        .baseai-widget-function-calls-icon.collapsed {
+          transform: rotate(-90deg);
+        }
+        .baseai-widget-function-calls-content {
+          display: block;
+        }
+        .baseai-widget-function-calls-content.collapsed {
+          display: none;
+        }
+        .baseai-widget-function-call {
+          margin-bottom: 10px;
+          padding: 10px;
+          background: white;
+          border-radius: 8px;
+          border-left: 3px solid #0088cc;
+        }
+        .baseai-widget-function-call:last-child {
+          margin-bottom: 0;
+        }
+        .baseai-widget-function-name {
+          font-weight: 600;
+          color: #0088cc;
+          margin-bottom: 6px;
+          display: flex;
+          align-items: center;
+          gap: 6px;
+        }
+        .baseai-widget-function-name::before {
+          content: '⚙️';
+          font-size: 14px;
+        }
+        .baseai-widget-function-params {
+          margin-top: 6px;
+          padding-top: 6px;
+          border-top: 1px solid #e2e8f0;
+        }
+        .baseai-widget-function-param {
+          margin-bottom: 4px;
+          font-size: 12px;
+          color: #64748b;
+        }
+        .baseai-widget-function-param-name {
+          font-weight: 500;
+          color: #475569;
+        }
+        .baseai-widget-function-param-value {
+          margin-left: 8px;
+          color: #1e293b;
+        }
+        /* Markdown styles */
+        .baseai-widget-markdown-p {
+          margin: 0 0 8px 0;
+          line-height: 1.6;
+        }
+        .baseai-widget-markdown-p:last-child {
+          margin-bottom: 0;
+        }
+        .baseai-widget-markdown-h1 {
+          font-size: 18px;
+          font-weight: 600;
+          margin: 12px 0 8px 0;
+          line-height: 1.4;
+        }
+        .baseai-widget-markdown-h2 {
+          font-size: 16px;
+          font-weight: 600;
+          margin: 10px 0 6px 0;
+          line-height: 1.4;
+        }
+        .baseai-widget-markdown-h3 {
+          font-size: 14px;
+          font-weight: 600;
+          margin: 8px 0 4px 0;
+          line-height: 1.4;
+        }
+        .baseai-widget-markdown-strong {
+          font-weight: 600;
+        }
+        .baseai-widget-markdown-em {
+          font-style: italic;
+        }
+        .baseai-widget-markdown-ul,
+        .baseai-widget-markdown-ol {
+          margin: 8px 0;
+          padding-left: 20px;
+        }
+        .baseai-widget-markdown-ul {
+          list-style-type: disc;
+        }
+        .baseai-widget-markdown-ol {
+          list-style-type: decimal;
+        }
+        .baseai-widget-markdown-li {
+          margin: 4px 0;
+          line-height: 1.5;
+        }
+        .baseai-widget-message.user .baseai-widget-markdown-link {
+          color: #0088cc;
+          text-decoration: underline;
+          cursor: pointer;
+        }
+        @media (prefers-color-scheme: dark) {
+          .baseai-widget-message.user .baseai-widget-markdown-link {
+            color: #8fc5f7;
+          }
+        }
+        .baseai-widget-message.assistant .baseai-widget-markdown-link {
+          color: #0088cc;
+          text-decoration: underline;
+          cursor: pointer;
+        }
+        .baseai-widget-message.assistant .baseai-widget-markdown-link:hover {
+          color: #006699;
+        }
+        @media (prefers-color-scheme: dark) {
+          .baseai-widget-message.assistant .baseai-widget-markdown-link {
+            color: #6ab3f3;
+          }
+          .baseai-widget-message.assistant .baseai-widget-markdown-link:hover {
+            color: #8fc5f7;
+          }
+        }
+        .baseai-widget-message.user .baseai-widget-markdown-code {
+          background: rgba(0, 136, 204, 0.15);
+          padding: 2px 6px;
+          border-radius: 4px;
+          font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+          font-size: 13px;
+          color: #1e293b;
+        }
+        .baseai-widget-message.assistant .baseai-widget-markdown-code {
+          background: #f1f5f9;
+          padding: 2px 6px;
+          border-radius: 4px;
+          font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+          font-size: 13px;
+          color: #e11d48;
+        }
+        @media (prefers-color-scheme: dark) {
+          .baseai-widget-message.assistant .baseai-widget-markdown-code {
+            background: #243447;
+            color: #fca5a5;
+          }
+        }
+        .baseai-widget-message.user .baseai-widget-markdown-pre {
+          background: rgba(0, 136, 204, 0.12);
+          padding: 12px;
+          border-radius: 8px;
+          overflow-x: auto;
+          margin: 8px 0;
+          border: 1px solid rgba(0, 136, 204, 0.25);
+        }
+        .baseai-widget-message.user .baseai-widget-markdown-pre .baseai-widget-markdown-code {
+          background: transparent;
+          padding: 0;
+          color: #1e293b;
+          font-size: 12px;
+          line-height: 1.5;
+        }
+        .baseai-widget-message.assistant .baseai-widget-markdown-pre {
+          background: #f1f5f9;
+          padding: 12px;
+          border-radius: 8px;
+          overflow-x: auto;
+          margin: 8px 0;
+          border: 1px solid #e2e8f0;
+        }
+        .baseai-widget-message.assistant .baseai-widget-markdown-pre .baseai-widget-markdown-code {
+          background: transparent;
+          padding: 0;
+          color: #1e293b;
+          font-size: 12px;
+          line-height: 1.5;
+        }
+        @media (prefers-color-scheme: dark) {
+          .baseai-widget-message.assistant .baseai-widget-markdown-pre {
+            background: #243447;
+            border-color: #2b5278;
+          }
+          .baseai-widget-message.assistant .baseai-widget-markdown-pre .baseai-widget-markdown-code {
+            color: #e4edfd;
+          }
+        }
+        .baseai-widget-message.user .baseai-widget-markdown-inline-code {
+          background: rgba(0, 136, 204, 0.15);
+          padding: 2px 6px;
+          border-radius: 4px;
+          font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+          font-size: 13px;
+          color: #1e293b;
+        }
+        .baseai-widget-message.assistant .baseai-widget-markdown-inline-code {
+          background: #f1f5f9;
+          padding: 2px 6px;
+          border-radius: 4px;
+          font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+          font-size: 13px;
+          color: #e11d48;
+        }
+        @media (prefers-color-scheme: dark) {
+          .baseai-widget-message.assistant .baseai-widget-markdown-inline-code {
+            background: #243447;
+            color: #fca5a5;
+          }
+        }
+        .baseai-widget-markdown-img {
+          max-width: 100%;
+          height: auto;
+          border-radius: 8px;
+          margin: 8px 0;
+        }
+        .baseai-widget-markdown-hr {
+          border: none;
+          border-top: 1px solid #e2e8f0;
+          margin: 12px 0;
+        }
+        .baseai-widget-markdown-blockquote {
+          border-left: 3px solid #cbd5e1;
+          padding-left: 12px;
+          margin: 8px 0;
+          color: #64748b;
+          font-style: italic;
+        }
+        .baseai-widget-input-container {
+          padding: 12px 16px;
+          background: white;
+          border-top: 1px solid #e2e8f0;
+          display: flex;
+          gap: 8px;
+          align-items: center;
+          box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.05);
+        }
+        @media (prefers-color-scheme: dark) {
+          .baseai-widget-input-container {
+            background: #17212b;
+            border-top-color: #2b5278;
+          }
+        }
+        .baseai-widget-input {
+          flex: 1;
+          border: 2px solid #e2e8f0;
+          border-radius: 24px;
+          padding: 12px 20px;
+          font-size: 15px;
+          outline: none;
+          transition: all 0.2s;
+          background: #f8fafc;
+          color: #1e293b;
+        }
+        .baseai-widget-input:focus {
+          border-color: #0088cc;
+          background: white;
+          box-shadow: 0 0 0 3px rgba(0, 136, 204, 0.1);
+        }
+        .baseai-widget-input::placeholder {
+          color: #94a3b8;
+        }
+        @media (prefers-color-scheme: dark) {
+          .baseai-widget-input {
+            background: #17212b;
+            border-color: #2b5278;
+            color: #e4edfd;
+          }
+          .baseai-widget-input:focus {
+            background: #182533;
+            border-color: #2b5278;
+            box-shadow: 0 0 0 3px rgba(43, 82, 120, 0.2);
+          }
+        }
+        .baseai-widget-send {
+          width: 44px;
+          height: 44px;
+          border-radius: 50%;
+          background: #0088cc;
+          border: none;
+          color: white;
+          cursor: pointer;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          transition: all 0.2s;
+          flex-shrink: 0;
+          box-shadow: 0 2px 8px rgba(0, 136, 204, 0.3);
+        }
+        @media (prefers-color-scheme: dark) {
+          .baseai-widget-send {
+            background: #2b5278;
+          }
+        }
+        .baseai-widget-send:hover:not(:disabled) {
+          transform: scale(1.05);
+          background: #006699;
+          box-shadow: 0 4px 12px rgba(0, 136, 204, 0.4);
+        }
+        @media (prefers-color-scheme: dark) {
+          .baseai-widget-send:hover:not(:disabled) {
+            background: #006699;
+          }
+        }
+        .baseai-widget-send:active:not(:disabled) {
+          transform: scale(0.95);
+        }
+        .baseai-widget-send:disabled {
+          opacity: 0.5;
+          cursor: not-allowed;
+        }
+        .baseai-widget-send svg {
+          width: 20px;
+          height: 20px;
+          stroke: white;
+          stroke-width: 2;
+          fill: none;
+        }
+        .baseai-widget-loading {
+          display: inline-flex;
+          align-items: center;
+          gap: 8px;
+          padding: 12px 16px;
+          background: white;
+          border: 1px solid #e2e8f0;
+          border-radius: 24px;
+          border-bottom-left-radius: 4px;
+          position: relative;
+          overflow: hidden;
+          box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+        }
+        @media (min-width: 768px) {
+          .baseai-widget-loading {
+            padding: 14px 20px;
+          }
+        }
+        @media (prefers-color-scheme: dark) {
+          .baseai-widget-loading {
+            background: #182533;
+            border-color: #2b5278;
+          }
+        }
+        .baseai-widget-loading::before {
+          content: '';
+          position: absolute;
+          top: 0;
+          left: -100%;
+          width: 100%;
+          height: 100%;
+          background: linear-gradient(90deg, transparent, rgba(0, 136, 204, 0.15), transparent);
+          animation: shimmer 2s infinite;
+        }
+        @keyframes shimmer {
+          0% { left: -100%; }
+          100% { left: 100%; }
+        }
+        .baseai-widget-loading-dots {
+          display: inline-flex;
+          gap: 4px;
+          align-items: center;
+        }
+        .baseai-widget-loading span {
+          width: 8px;
+          height: 8px;
+          border-radius: 50%;
+          background: #0088cc;
+          animation: typing 1.4s infinite ease-in-out both;
+          box-shadow: 0 0 8px rgba(0, 136, 204, 0.4);
+        }
+        @media (prefers-color-scheme: dark) {
+          .baseai-widget-loading span {
+            background: #2b5278;
+            box-shadow: 0 0 8px rgba(43, 82, 120, 0.4);
+          }
+        }
+        .baseai-widget-loading span:nth-child(1) { 
+          animation-delay: 0s;
+        }
+        .baseai-widget-loading span:nth-child(2) { 
+          animation-delay: 0.2s;
+        }
+        .baseai-widget-loading span:nth-child(3) { 
+          animation-delay: 0.4s;
+        }
+        @keyframes typing {
+          0%, 60%, 100% { 
+            transform: translateY(0) scale(1);
+            opacity: 0.7;
+          }
+          30% { 
+            transform: translateY(-10px) scale(1.1);
+            opacity: 1;
+          }
+        }
+        .baseai-widget-powered {
+          padding: 12px 16px;
+          text-align: center;
+          background: #f8fafc;
+          border-top: 1px solid #e2e8f0;
+          font-size: 12px;
+          color: #64748b;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 4px;
+        }
+        @media (prefers-color-scheme: dark) {
+          .baseai-widget-powered {
+            background: #17212b;
+            border-top-color: #2b5278;
+          }
+        }
+        .baseai-widget-powered a {
+          color: #0088cc;
+          text-decoration: none;
+          font-weight: 500;
+          transition: color 0.2s;
+        }
+        @media (prefers-color-scheme: dark) {
+          .baseai-widget-powered a {
+            color: #2b5278;
+          }
+        }
+        .baseai-widget-powered a:hover {
+          color: #006699;
+        }
+        /* Desktop styles */
+        @media (min-width: 640px) {
+          .baseai-widget-container {
+            bottom: 20px;
+            right: 20px;
+            left: auto;
+          }
+          .baseai-widget-button {
+            position: relative;
+            bottom: auto;
+            right: auto;
+          }
+          .baseai-widget-chatbox {
+            position: absolute;
+            bottom: 80px;
+            right: 0;
+            left: auto;
+            top: auto;
+            width: 420px;
+            height: 640px;
+            max-height: calc(100vh - 100px);
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            transform: scale(0.9) translateY(20px);
+            opacity: 0;
+          }
+          .baseai-widget-chatbox.open {
+            transform: scale(1) translateY(0);
+            opacity: 1;
+          }
+          .baseai-widget-message-bubble {
+            max-width: 75%;
+          }
+        }
+        /* Large desktop */
+        @media (min-width: 1024px) {
+          .baseai-widget-chatbox {
+            width: 440px;
+            height: 680px;
+          }
+        }
+      `;
+
+      const styleSheet = document.createElement('style');
+      styleSheet.textContent = styles;
+      document.head.appendChild(styleSheet);
+
+      // Create modern widget HTML
+      container.innerHTML = `
+        <div class="baseai-widget-container">
+          <div class="baseai-widget-chatbox" id="${this.containerId}-chatbox">
+            <div class="baseai-widget-header">
+              <h3>${this.title}</h3>
+              <button class="baseai-widget-close" id="${this.containerId}-close" aria-label="Close chat">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                  <line x1="18" y1="6" x2="6" y2="18"></line>
+                  <line x1="6" y1="6" x2="18" y2="18"></line>
+                </svg>
+              </button>
+            </div>
+            <div class="baseai-widget-messages" id="${this.containerId}-messages"></div>
+            <div class="baseai-widget-input-container">
+              <input 
+                type="text" 
+                class="baseai-widget-input" 
+                id="${this.containerId}-input" 
+                placeholder="Type your message..."
+                autocomplete="off"
+                aria-label="Message input"
+              />
+              <button class="baseai-widget-send" id="${this.containerId}-send" type="submit" aria-label="Send message">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                  <line x1="22" y1="2" x2="11" y2="13"></line>
+                  <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+                </svg>
+              </button>
+            </div>
+            <div class="baseai-widget-powered">
+              <span>Powered by</span>
+              <a href="https://a2abase.ai" target="_blank" rel="noopener noreferrer">A2ABase</a>
+            </div>
+          </div>
+          <button class="baseai-widget-button" id="${this.containerId}-button" aria-label="Open chat">
+            <svg viewBox="0 0 24 24" fill="currentColor">
+              <path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-2 12H6v-2h12v2zm0-3H6V9h12v2zm0-3H6V6h12v2z"/>
+            </svg>
+          </button>
+        </div>
+      `;
+
+      // Attach event listeners
+      const button = document.getElementById(`${this.containerId}-button`);
+      const closeBtn = document.getElementById(`${this.containerId}-close`);
+      const sendBtn = document.getElementById(`${this.containerId}-send`);
+      const input = document.getElementById(`${this.containerId}-input`);
+      const chatbox = document.getElementById(`${this.containerId}-chatbox`);
+
+      button.addEventListener('click', () => this.toggleChat());
+      closeBtn.addEventListener('click', () => this.toggleChat());
+      sendBtn.addEventListener('click', () => this.sendMessage());
+      input.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') {
+          this.sendMessage();
+        }
+      });
+    }
+
+    toggleChat() {
+      this.isOpen = !this.isOpen;
+      const chatbox = document.getElementById(`${this.containerId}-chatbox`);
+      if (chatbox) {
+        if (this.isOpen) {
+          chatbox.classList.add('open');
+          const input = document.getElementById(`${this.containerId}-input`);
+          if (input) input.focus();
+        } else {
+          chatbox.classList.remove('open');
+        }
+      }
+    }
+
+    async loadAgentData() {
+      if (!this.agentId) return;
+      
+      try {
+        const response = await fetch(`${this.apiUrl}/agents/${this.agentId}`, {
+          method: 'GET',
+          headers: {
+            'X-API-Key': this.apiKey,
+          },
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          this.agentData = data;
+          if (this.debug) {
+            console.log('BaseAI Widget: Loaded agent data', data);
+          }
+        }
+      } catch (error) {
+        if (this.debug) {
+          console.error('BaseAI Widget: Failed to load agent data', error);
+        }
+      }
+    }
+
+    async loadThread() {
+      try {
+        // If we have a saved threadId, use it instead of creating a new one
+        if (this.threadId) {
+          if (this.debug) {
+            console.log('BaseAI Widget: Using saved threadId:', this.threadId);
+          }
+          // Render saved messages
+          this.renderSavedMessages();
+          // Show greeting message if no messages and agent has one
+          if (this.messages.length === 0 && this.agentData?.greeting_message) {
+            this.showGreetingMessage();
+          }
+          return;
+        }
+
+        // Create a new thread (endpoint expects form data, not JSON)
+        const formData = new FormData();
+        
+        // Debug: Log API key (first 10 chars only for security)
+        if (this.debug) {
+          console.log('BaseAI Widget: Sending request with API key:', this.apiKey ? `${this.apiKey.substring(0, 10)}...` : 'MISSING');
+        }
+        
+        const response = await fetch(`${this.apiUrl}/threads`, {
+          method: 'POST',
+          headers: {
+            'X-API-Key': this.apiKey,
+          },
+          body: formData,
+        });
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          throw new Error(`Failed to create thread: ${errorText}`);
+        }
+
+        const data = await response.json();
+        this.threadId = data.thread_id;
+        this.saveThreadId();
+        
+        // Render saved messages if any
+        this.renderSavedMessages();
+        
+        // Show greeting message if no messages and agent has one
+        if (this.messages.length === 0 && this.agentData?.greeting_message) {
+          this.showGreetingMessage();
+        }
+      } catch (error) {
+        if (this.debug) {
+          console.error('BaseAI Widget: Failed to load thread', error);
+        }
+        this.addMessage('assistant', 'Sorry, I couldn\'t connect. Please check your API key.');
+      }
+    }
+
+    showGreetingMessage() {
+      if (!this.agentData?.greeting_message || !this.agentData.greeting_message.trim()) {
+        return;
+      }
+
+      const messagesContainer = document.getElementById(`${this.containerId}-messages`);
+      if (!messagesContainer) return;
+
+      // Check if greeting message already exists
+      const existingGreeting = messagesContainer.querySelector('.baseai-widget-greeting-message');
+      if (existingGreeting) return;
+
+      // Check if there are any messages - don't show greeting if messages exist
+      if (this.messages.length > 0) {
+        // Remove header if it exists and messages are present
+        const existingHeader = messagesContainer.querySelector('.baseai-widget-greeting-header');
+        if (existingHeader) {
+          existingHeader.remove();
+        }
+        return;
+      }
+
+      // Check if header already exists
+      let headerDiv = messagesContainer.querySelector('.baseai-widget-greeting-header');
+      if (!headerDiv) {
+        // Create "Start a conversation" header
+        headerDiv = document.createElement('div');
+        headerDiv.className = 'baseai-widget-greeting-header';
+        headerDiv.style.cssText = 'text-align: center; margin-bottom: 1.5rem; padding: 0 1rem;';
+        
+        const headerText = document.createElement('h2');
+        headerText.textContent = 'Start a conversation';
+        // Add dark mode support
+        const isDarkMode = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+        headerText.style.cssText = `font-size: 1.5rem; font-weight: 700; color: ${isDarkMode ? '#e4edfd' : '#111827'}; margin: 0; line-height: 1.2;`;
+        headerDiv.appendChild(headerText);
+        messagesContainer.insertBefore(headerDiv, messagesContainer.firstChild);
+      }
+
+      // Create greeting message element
+      const greetingDiv = document.createElement('div');
+      greetingDiv.className = 'baseai-widget-message assistant baseai-widget-greeting-message';
+      
+      const bubble = document.createElement('div');
+      bubble.className = 'baseai-widget-message-bubble';
+      // Use gradient background with dark mode support (Telegram theme)
+      if (isDarkMode) {
+        bubble.style.cssText = 'background: linear-gradient(to bottom right, rgba(0, 136, 204, 0.25), rgba(24, 37, 51, 1)); border: 2px solid rgba(43, 82, 120, 0.4); box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3); padding: 1rem 1.25rem;';
+      } else {
+        bubble.style.cssText = 'background: linear-gradient(to bottom right, rgba(0, 136, 204, 0.08), rgba(255, 255, 255, 1)); border: 2px solid rgba(0, 136, 204, 0.2); box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); padding: 1rem 1.25rem;';
+      }
+      
+      const markdownHtml = this.renderMarkdown(this.agentData.greeting_message);
+      const textContainer = document.createElement('div');
+      textContainer.className = 'baseai-widget-markdown-content';
+      textContainer.innerHTML = markdownHtml;
+      bubble.appendChild(textContainer);
+      
+      greetingDiv.appendChild(bubble);
+      messagesContainer.appendChild(greetingDiv);
+      messagesContainer.scrollTop = messagesContainer.scrollHeight;
+    }
+
+    // Render saved messages from localStorage
+    renderSavedMessages() {
+      const messagesContainer = document.getElementById(`${this.containerId}-messages`);
+      if (!messagesContainer) return;
+
+      // Clear container first
+      messagesContainer.innerHTML = '';
+
+      // Render each saved message
+      this.messages.forEach((msg) => {
+        const messageDiv = document.createElement('div');
+        messageDiv.id = msg.id;
+        messageDiv.className = `baseai-widget-message ${msg.type}`;
+
+        const bubble = document.createElement('div');
+        bubble.className = 'baseai-widget-message-bubble';
+        
+        // Parse function calls from text
+        const { text: cleanText, functionCalls } = this.parseFunctionCalls(msg.text);
+        
+        // Add text content with markdown rendering
+        if (cleanText) {
+          const markdownHtml = this.renderMarkdown(cleanText);
+          const textContainer = document.createElement('div');
+          textContainer.className = 'baseai-widget-markdown-content';
+          textContainer.innerHTML = markdownHtml;
+          bubble.appendChild(textContainer);
+        }
+        
+        // Add function calls if present and debug is enabled
+        if (functionCalls && this.debug) {
+          const functionCallsElement = this.createFunctionCallsElement(functionCalls);
+          bubble.appendChild(functionCallsElement);
+        }
+
+        messageDiv.appendChild(bubble);
+        messagesContainer.appendChild(messageDiv);
+      });
+
+      // Scroll to bottom
+      messagesContainer.scrollTop = messagesContainer.scrollHeight;
+
+      // If no messages were rendered, show greeting message if available
+      if (this.messages.length === 0 && this.agentData?.greeting_message) {
+        this.showGreetingMessage();
+      }
+    }
+
+    async sendMessage() {
+      const input = document.getElementById(`${this.containerId}-input`);
+      if (!input) return;
+
+      const message = input.value.trim();
+      if (!message || !this.threadId) return;
+
+      input.value = '';
+      input.disabled = true;
+      const sendBtn = document.getElementById(`${this.containerId}-send`);
+      if (sendBtn) sendBtn.disabled = true;
+
+      this.addMessage('user', message);
+
+      // Show loading indicator
+      const loadingId = this.addLoadingMessage();
+
+      // Declare variables outside try block so they're accessible in catch block
+      let assistantMessageId = null;
+      let fullText = '';
+      let streamClosed = false;
+      let loadingRemoved = false;
+
+      try {
+        // First, add the user message to the thread
+        await fetch(`${this.apiUrl}/threads/${this.threadId}/messages`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-API-Key': this.apiKey,
+          },
+          body: JSON.stringify({
+            type: 'user',
+            content: message,
+            is_llm_message: true,
+          }),
+        });
+
+        // Start the agent (matching frontend's startAgent call)
+        const startResponse = await fetch(`${this.apiUrl}/thread/${this.threadId}/agent/start`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-API-Key': this.apiKey,
+          },
+          body: JSON.stringify({
+            model_name: window.BASEAI_DEFAULT_MODEL || 'openrouter/minimax/minimax-m2', // Default model from config or fallback
+            stream: true, // Always stream for better UX
+            agent_id: this.agentId,
+          }),
+        });
+
+        if (!startResponse.ok) {
+          const errorText = await startResponse.text();
+          throw new Error(`Failed to start agent: ${errorText}`);
+        }
+
+        const startData = await startResponse.json();
+        const agentRunId = startData.agent_run_id;
+
+        if (!agentRunId) {
+          throw new Error('No agent run ID received');
+        }
+
+        // Don't remove loading indicator yet - wait for first content
+        // Stream the agent response using EventSource (same as frontend)
+        // Note: EventSource doesn't support custom headers, so we need to pass API key as query param
+        // But since the backend expects X-API-Key header, we'll use fetch with ReadableStream
+        // However, we'll handle it the same way as EventSource would
+
+        // Helper function to safely parse JSON
+        const safeJsonParse = (str, defaultValue) => {
+          try {
+            return JSON.parse(str);
+          } catch (e) {
+            return defaultValue;
+          }
+        };
+
+        // Handle stream message (following useAgentStream pattern)
+        const handleStreamMessage = (rawData) => {
+          if (streamClosed) return;
+
+          let processedData = rawData;
+          if (processedData.startsWith('data: ')) {
+            processedData = processedData.substring(6).trim();
+          }
+          if (!processedData) return;
+
+          // Debug: log first few messages to understand the format
+          if (this.debug) {
+            console.log('Widget: Received stream data:', processedData.substring(0, 200));
+          }
+
+          // Check for completion status messages first
+          if (processedData === '{"type": "status", "status": "completed", "message": "Agent run completed successfully"}') {
+            streamClosed = true;
+            return;
+          }
+          if (processedData.includes('Run data not available for streaming') || 
+              processedData.includes('Stream ended with status: completed')) {
+            streamClosed = true;
+            return;
+          }
+
+          // Check for completion/error status messages in JSON format
+          try {
+            const jsonData = JSON.parse(processedData);
+            if (jsonData.type === 'status' && jsonData.status) {
+              if (jsonData.status === 'completed' || jsonData.status === 'stopped' || jsonData.status === 'failed') {
+                streamClosed = true;
+                return;
+              }
+              if (jsonData.status === 'error') {
+                throw new Error(jsonData.message || 'Unknown error occurred');
+              }
+            }
+          } catch (jsonError) {
+            // Not JSON or could not parse as JSON, continue processing
+          }
+
+          // Parse the message (following UnifiedMessage structure)
+          const message = safeJsonParse(processedData, null);
+          if (!message) {
+            if (this.debug) {
+              console.warn('Widget: Failed to parse streamed message:', processedData);
+            }
+            return;
+          }
+
+          // Check for completion status at top level
+          if (message.type === 'status' && message.status) {
+            if (message.status === 'completed' || message.status === 'stopped' || message.status === 'failed') {
+              streamClosed = true;
+              return;
+            }
+            if (message.status === 'error') {
+              throw new Error(message.message || 'Unknown error occurred');
+            }
+            return;
+          }
+
+          // Parse content and metadata (they are JSON strings)
+          const parsedContent = safeJsonParse(message.content, {});
+          const parsedMetadata = safeJsonParse(message.metadata, {});
+
+          // Handle assistant messages (following useAgentStream pattern)
+          if (message.type === 'assistant') {
+            if (parsedMetadata.stream_status === 'chunk' && parsedContent.content) {
+              // First chunk - remove loading and create assistant message
+              if (!loadingRemoved) {
+                this.removeMessage(loadingId);
+                loadingRemoved = true;
+                assistantMessageId = this.addMessage('assistant', '');
+              }
+              // Streaming chunk - append to fullText (function calls are part of the content)
+              fullText += parsedContent.content;
+              this.updateMessage(assistantMessageId, fullText);
+            } else if (parsedMetadata.stream_status === 'complete') {
+              // Message chunk complete - but stream continues, don't close!
+              // Just ensure loading is removed
+              if (!loadingRemoved) {
+                this.removeMessage(loadingId);
+                loadingRemoved = true;
+                if (!assistantMessageId) {
+                  assistantMessageId = this.addMessage('assistant', fullText || '');
+                }
+              }
+              // Continue streaming - don't set streamClosed = true here
+            } else if (!parsedMetadata.stream_status && parsedContent.content) {
+              // Non-chunked assistant message (only add if we haven't already processed chunks)
+              if (!loadingRemoved) {
+                this.removeMessage(loadingId);
+                loadingRemoved = true;
+                assistantMessageId = this.addMessage('assistant', '');
+              }
+              if (fullText === '') {
+                fullText += parsedContent.content;
+                this.updateMessage(assistantMessageId, fullText);
+              } else {
+                // Append to existing content
+                fullText += parsedContent.content;
+                this.updateMessage(assistantMessageId, fullText);
+              }
+            }
+          } else if (message.type === 'status') {
+            // Handle status messages - only close stream on actual completion status
+            if (parsedContent.status && ['completed', 'stopped', 'failed'].includes(parsedContent.status)) {
+              if (parsedContent.status === 'failed' || parsedContent.status === 'error') {
+                throw new Error(parsedContent.message || 'Agent run failed');
+              }
+              // Only close stream on actual completion
+              streamClosed = true;
+            }
+          } else if (message.type === 'tool') {
+            // Tool results - continue streaming, don't close
+            // The stream continues after tool execution
+          }
+        };
+
+        // Use fetch with ReadableStream
+        // Note: The backend stream endpoint accepts token as query param OR X-API-Key header
+        // Since we're using API keys, we'll use the header approach
+        const streamResponse = await fetch(`${this.apiUrl}/agent-run/${agentRunId}/stream`, {
+          method: 'GET',
+          headers: {
+            'X-API-Key': this.apiKey,
+          },
+        });
+
+        if (!streamResponse.ok) {
+          throw new Error(`Failed to stream agent response: ${streamResponse.statusText}`);
+        }
+
+        // Read the stream efficiently (SSE format) - optimized for speed
+        const reader = streamResponse.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) {
+              // Process any remaining buffer
+              if (buffer.trim()) {
+                const lines = buffer.split('\n');
+                for (const line of lines) {
+                  if (line.trim() && line.startsWith('data: ')) {
+                    try {
+                      handleStreamMessage(line);
+                    } catch (e) {
+                      if (e.message && (e.message.includes('Agent run failed') || e.message.includes('error'))) {
+                        throw e;
+                      }
+                      if (this.debug) {
+                        console.warn('Widget: Error processing stream message:', e, line);
+                      }
+                    }
+                  }
+                }
+              }
+              break;
+            }
+
+            // Decode and process immediately
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || ''; // Keep incomplete line in buffer
+
+            // Process all complete lines immediately
+            for (const line of lines) {
+              if (line.trim() === '') continue;
+              if (line.startsWith('data: ')) {
+                try {
+                  handleStreamMessage(line);
+                  if (streamClosed) break;
+                } catch (e) {
+                  // If it's an error we threw, rethrow it
+                  if (e.message && (e.message.includes('Agent run failed') || e.message.includes('error'))) {
+                    throw e;
+                  }
+                  // Otherwise, log and continue
+                  if (this.debug) {
+                    console.warn('Widget: Error processing stream message:', e, line);
+                  }
+                }
+              }
+            }
+
+            if (streamClosed) break;
+          }
+        } finally {
+          reader.releaseLock();
+        }
+
+        // If we never received content, remove loading and show error
+        if (!loadingRemoved) {
+          this.removeMessage(loadingId);
+          if (!fullText.trim() && !streamClosed) {
+            this.addMessage('assistant', 'No response received. Please try again.');
+          } else if (assistantMessageId) {
+            this.updateMessage(assistantMessageId, fullText || 'No response received. Please try again.');
+          }
+        } else if (!fullText.trim() && !streamClosed && assistantMessageId) {
+          this.updateMessage(assistantMessageId, 'No response received. Please try again.');
+        }
+      } catch (error) {
+        if (this.debug) {
+          console.error('BaseAI Widget: Failed to send message', error);
+        }
+        if (!loadingRemoved) {
+          this.removeMessage(loadingId);
+        }
+        const errorMessage = error?.message || error?.toString() || 'Unknown error occurred';
+        // this.addMessage('assistant', 'Sorry, I encountered an error: ' + errorMessage + '. Please check your API key and try again.');
+      } finally {
+        input.disabled = false;
+        if (sendBtn) sendBtn.disabled = false;
+        input.focus();
+      }
+    }
+
+    // Check if content uses new XML format
+    isNewXmlFormat(content) {
+      return /<function_calls>[\s\S]*<invoke\s+name=/.test(content);
+    }
+
+    // Parse parameter value (handles JSON, booleans, numbers)
+    parseParameterValue(value) {
+      const trimmed = value.trim();
+      
+      if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+        try {
+          return JSON.parse(trimmed);
+        } catch {
+          // Not valid JSON, return as string
+        }
+      }
+      
+      if (trimmed.toLowerCase() === 'true') return true;
+      if (trimmed.toLowerCase() === 'false') return false;
+      
+      if (/^-?\d+(\.\d+)?$/.test(trimmed)) {
+        const num = parseFloat(trimmed);
+        if (!isNaN(num)) return num;
+      }
+      
+      return value;
+    }
+
+    // Parse XML tool calls (matching ThreadContent logic)
+    parseXmlToolCalls(content) {
+      const toolCalls = [];
+      const functionCallsRegex = /<function_calls>([\s\S]*?)<\/function_calls>/gi;
+      let functionCallsMatch;
+      
+      while ((functionCallsMatch = functionCallsRegex.exec(content)) !== null) {
+        const functionCallsContent = functionCallsMatch[1];
+        
+        const invokeRegex = /<invoke\s+name=["']([^"']+)["']>([\s\S]*?)<\/invoke>/gi;
+        let invokeMatch;
+        
+        while ((invokeMatch = invokeRegex.exec(functionCallsContent)) !== null) {
+          const functionName = invokeMatch[1].replace(/_/g, '-');
+          const invokeContent = invokeMatch[2];
+          const parameters = {};
+          
+          const paramRegex = /<parameter\s+name=["']([^"']+)["']>([\s\S]*?)<\/parameter>/gi;
+          let paramMatch;
+          
+          while ((paramMatch = paramRegex.exec(invokeContent)) !== null) {
+            const paramName = paramMatch[1];
+            const paramValue = paramMatch[2].trim();
+            parameters[paramName] = this.parseParameterValue(paramValue);
+          }
+          
+          toolCalls.push({
+            functionName,
+            parameters,
+            rawXml: invokeMatch[0]
+          });
+        }
+      }
+      
+      return toolCalls;
+    }
+
+    // Preprocess text-only tools (like ask/complete) - matching ThreadContent logic
+    preprocessTextOnlyTools(content) {
+      if (!content || typeof content !== 'string') {
+        return content || '';
+      }
+
+      // Handle new function calls format - only strip if no attachments
+      content = content.replace(/<function_calls>\s*<invoke name="ask">\s*<parameter name="text">([\s\S]*?)<\/parameter>\s*<\/invoke>\s*<\/function_calls>/gi, (match) => {
+        if (match.includes('<parameter name="attachments"')) return match;
+        return match.replace(/<function_calls>\s*<invoke name="ask">\s*<parameter name="text">([\s\S]*?)<\/parameter>\s*<\/invoke>\s*<\/function_calls>/gi, '$1');
+      });
+
+      content = content.replace(/<function_calls>\s*<invoke name="complete">\s*<parameter name="text">([\s\S]*?)<\/parameter>\s*<\/invoke>\s*<\/function_calls>/gi, (match) => {
+        if (match.includes('<parameter name="attachments"')) return match;
+        return match.replace(/<function_calls>\s*<invoke name="complete">\s*<parameter name="text">([\s\S]*?)<\/parameter>\s*<\/invoke>\s*<\/function_calls>/gi, '$1');
+      });
+
+      content = content.replace(/<function_calls>\s*<invoke name="present_presentation">[\s\S]*?<parameter name="text">([\s\S]*?)<\/parameter>[\s\S]*?<\/invoke>\s*<\/function_calls>/gi, '$1');
+
+      return content;
+    }
+
+    // Get user-friendly tool name
+    getUserFriendlyToolName(toolName) {
+      const toolNameMap = {
+        'execute-command': 'Executing Command',
+        'create-file': 'Creating File',
+        'delete-file': 'Deleting File',
+        'full-file-rewrite': 'Rewriting File',
+        'str-replace': 'Editing Text',
+        'edit-file': 'Editing File',
+        'read-file': 'Reading File',
+        'web-search': 'Searching Web',
+        'web_search': 'Searching Web',
+        'browser-navigate-to': 'Navigating to Page',
+        'browser-act': 'Performing Action',
+        'browser-extract-content': 'Extracting Content',
+        'browser-screenshot': 'Taking Screenshot',
+        'deploy-site': 'Deploying',
+        'ask': 'Ask',
+        'complete': 'Completing Task',
+      };
+
+      // Check for MCP tools (mcp_serverName_toolName)
+      if (toolName.startsWith('mcp-')) {
+        const parts = toolName.split('-');
+        if (parts.length >= 3) {
+          const serverName = parts[1];
+          const toolNamePart = parts.slice(2).join('-');
+          const formattedServerName = serverName.charAt(0).toUpperCase() + serverName.slice(1);
+          const formattedToolName = toolNamePart
+            .split('-')
+            .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+            .join(' ');
+          return `${formattedServerName}: ${formattedToolName}`;
+        }
+      }
+
+      // Check direct mapping
+      if (toolNameMap[toolName]) {
+        return toolNameMap[toolName];
+      }
+
+      // Format tool name (capitalize words)
+      return toolName
+        .split('-')
+        .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+        .join(' ');
+    }
+
+    // Extract primary parameter for display
+    extractPrimaryParam(toolCall) {
+      const params = toolCall.parameters;
+      if (params.file_path) return params.file_path;
+      if (params.command) return params.command;
+      if (params.query) return params.query;
+      if (params.url) return params.url;
+      if (params.target_file) return params.target_file;
+      return null;
+    }
+
+    parseFunctionCalls(text) {
+      // Preprocess to handle text-only tools first
+      const preprocessedText = this.preprocessTextOnlyTools(text);
+      
+      // Check if it's new XML format
+      if (!this.isNewXmlFormat(preprocessedText)) {
+        return { text: preprocessedText, functionCalls: null };
+      }
+
+      // Find all function_calls blocks
+      const functionCallsRegex = /<function_calls>([\s\S]*?)<\/function_calls>/gi;
+      let match;
+      let lastIndex = 0;
+      const textParts = [];
+      const allFunctionCalls = [];
+      
+      while ((match = functionCallsRegex.exec(preprocessedText)) !== null) {
+        // Add text before the function_calls block
+        if (match.index > lastIndex) {
+          const textBefore = preprocessedText.substring(lastIndex, match.index);
+          if (textBefore.trim()) {
+            textParts.push(textBefore);
+          }
+        }
+        
+        // Parse tool calls in this block
+        const toolCalls = this.parseXmlToolCalls(match[0]);
+        
+        // Filter out ask/complete tools (they're handled as text)
+        const filteredToolCalls = toolCalls.filter(tc => {
+          const toolName = tc.functionName.replace(/_/g, '-');
+          return toolName !== 'ask' && toolName !== 'complete' && toolName !== 'present-presentation';
+        });
+        
+        allFunctionCalls.push(...filteredToolCalls);
+        lastIndex = match.index + match[0].length;
+      }
+      
+      // Add any remaining text
+      if (lastIndex < preprocessedText.length) {
+        const remainingText = preprocessedText.substring(lastIndex);
+        if (remainingText.trim()) {
+          textParts.push(remainingText);
+        }
+      }
+      
+      const cleanText = textParts.join(' ').trim();
+      return { 
+        text: cleanText, 
+        functionCalls: allFunctionCalls.length > 0 ? allFunctionCalls : null 
+      };
+    }
+
+    // Get tool icon emoji/character
+    getToolIcon(toolName) {
+      const iconMap = {
+        'execute-command': '⚡',
+        'create-file': '📄',
+        'delete-file': '🗑️',
+        'edit-file': '✏️',
+        'read-file': '📖',
+        'web-search': '🔍',
+        'web_search': '🔍',
+        'browser-navigate-to': '🌐',
+        'browser-act': '🖱️',
+        'browser-extract-content': '📋',
+        'browser-screenshot': '📸',
+        'deploy-site': '🚀',
+      };
+      
+      // Check for MCP tools
+      if (toolName.startsWith('mcp-')) {
+        return '🔌';
+      }
+      
+      return iconMap[toolName] || '⚙️';
+    }
+
+    createFunctionCallsElement(functionCalls) {
+      const container = document.createElement('div');
+      container.className = 'baseai-widget-function-calls';
+      
+      const header = document.createElement('div');
+      header.className = 'baseai-widget-function-calls-header';
+      header.innerHTML = `
+        <svg class="baseai-widget-function-calls-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polyline points="6 9 12 15 18 9"></polyline>
+        </svg>
+        <span>${functionCalls.length} tool call${functionCalls.length !== 1 ? 's' : ''}</span>
+      `;
+      
+      const content = document.createElement('div');
+      content.className = 'baseai-widget-function-calls-content';
+      
+      functionCalls.forEach((toolCall) => {
+        const toolName = toolCall.functionName;
+        const friendlyName = this.getUserFriendlyToolName(toolName);
+        const primaryParam = this.extractPrimaryParam(toolCall);
+        
+        const funcDiv = document.createElement('div');
+        funcDiv.className = 'baseai-widget-function-call';
+        
+        const nameDiv = document.createElement('div');
+        nameDiv.className = 'baseai-widget-function-name';
+        nameDiv.innerHTML = `<span style="margin-right: 6px;">${this.getToolIcon(toolName)}</span>${this.escapeHtml(friendlyName)}`;
+        
+        // Show primary parameter if available
+        if (primaryParam) {
+          const paramDisplay = typeof primaryParam === 'string' && primaryParam.length > 50 
+            ? primaryParam.substring(0, 47) + '...' 
+            : String(primaryParam);
+          nameDiv.innerHTML += ` <span style="color: #64748b; font-weight: normal; margin-left: 8px;">${this.escapeHtml(paramDisplay)}</span>`;
+        }
+        
+        const paramsDiv = document.createElement('div');
+        paramsDiv.className = 'baseai-widget-function-params';
+        
+        // Only show other parameters if we have more than just the primary one
+        const otherParams = Object.entries(toolCall.parameters).filter(([name]) => {
+          if (primaryParam && (name === 'file_path' || name === 'command' || name === 'query' || name === 'url' || name === 'target_file')) {
+            return false; // Already shown as primary
+          }
+          return true;
+        });
+        
+        if (otherParams.length > 0) {
+          otherParams.forEach(([paramName, paramValue]) => {
+            const paramDiv = document.createElement('div');
+            paramDiv.className = 'baseai-widget-function-param';
+            const displayValue = typeof paramValue === 'object' 
+              ? JSON.stringify(paramValue, null, 2)
+              : String(paramValue);
+            paramDiv.innerHTML = `
+              <span class="baseai-widget-function-param-name">${this.escapeHtml(paramName)}:</span>
+              <span class="baseai-widget-function-param-value">${this.escapeHtml(displayValue)}</span>
+            `;
+            paramsDiv.appendChild(paramDiv);
+          });
+        }
+        
+        funcDiv.appendChild(nameDiv);
+        if (otherParams.length > 0) {
+          funcDiv.appendChild(paramsDiv);
+        }
+        content.appendChild(funcDiv);
+      });
+      
+      // Toggle collapse/expand
+      let isCollapsed = false;
+      header.addEventListener('click', () => {
+        isCollapsed = !isCollapsed;
+        const icon = header.querySelector('.baseai-widget-function-calls-icon');
         if (isCollapsed) {
           icon.classList.add('collapsed');
           content.classList.add('collapsed');
@@ -342,432 +1715,386 @@
           icon.classList.remove('collapsed');
           content.classList.remove('collapsed');
         }
-      }
-    });
-    container.appendChild(header);
-    container.appendChild(content);
-    return container;
-  };
-
-  MobileChatWidget.prototype.processInlineMarkdown = function(text) {
-    if (!text || typeof text !== 'string') return '';
-    var self = this;
-    var codeBlocks = [];
-    var html = text.replace(/`([^`]+)`/g, function(_, code) {
-      codeBlocks.push(self.escapeHtml(code));
-      return '\x01C' + (codeBlocks.length - 1) + '\x01';
-    });
-    html = self.escapeHtml(html);
-    html = html.replace(/\x01C(\d+)\x01/g, function(_, n) {
-      return '<code class="mc-inline-code">' + codeBlocks[parseInt(n, 10)] + '</code>';
-    });
-    html = html.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '<img src="$2" alt="$1" class="mc-img"/>');
-    html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener" class="mc-link">$1</a>');
-    html = html.replace(/\*\*([^*]+?)\*\*/g, '<strong class="mc-strong">$1</strong>');
-    html = html.replace(/__([^_]+?)__/g, '<strong class="mc-strong">$1</strong>');
-    html = html.replace(/\*([^*\n]+?)\*/g, '<em class="mc-em">$1</em>');
-    html = html.replace(/_([^_\n]+?)_/g, '<em class="mc-em">$1</em>');
-    return html;
-  };
-
-  MobileChatWidget.prototype.renderMarkdown = function(text) {
-    if (!text || typeof text !== 'string') return '';
-    var lines = text.split('\n');
-    var processed = [];
-    var inCodeBlock = false;
-    var codeContent = [];
-    var inList = false;
-    var listType = null;
-    var listItems = [];
-    var self = this;
-
-    function closeList() {
-      if (inList && listItems.length) {
-        processed.push('<' + listType + ' class="mc-ul">' + listItems.join('') + '</' + listType + '>');
-        listItems = [];
-      }
-      inList = false;
-      listType = null;
+      });
+      
+      container.appendChild(header);
+      container.appendChild(content);
+      
+      return container;
     }
 
-    for (var i = 0; i < lines.length; i++) {
-      var line = lines[i];
-      var t = line.trim();
+    escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
 
-      if (t.startsWith('```')) {
+    // Simple markdown to HTML converter
+    renderMarkdown(text) {
+      if (!text || typeof text !== 'string') {
+        return '';
+      }
+
+      // Split into lines for processing
+      const lines = text.split('\n');
+      const processedLines = [];
+      let inCodeBlock = false;
+      let codeBlockContent = [];
+      let inList = false;
+      let listItems = [];
+      let listType = null; // 'ul' or 'ol'
+
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        const trimmed = line.trim();
+
+        // Handle code blocks
+        if (trimmed.startsWith('```')) {
+          if (inCodeBlock) {
+            // End code block
+            const code = codeBlockContent.join('\n');
+            processedLines.push(`<pre class="baseai-widget-markdown-pre"><code class="baseai-widget-markdown-code">${this.escapeHtml(code)}</code></pre>`);
+            codeBlockContent = [];
+            inCodeBlock = false;
+          } else {
+            // Start code block
+            inCodeBlock = true;
+            // Close any open list
+            if (inList) {
+              processedLines.push(`<${listType} class="baseai-widget-markdown-${listType}">${listItems.join('')}</${listType}>`);
+              listItems = [];
+              inList = false;
+              listType = null;
+            }
+          }
+          continue;
+        }
+
         if (inCodeBlock) {
-          processed.push('<pre class="mc-pre"><code class="mc-code">' + self.escapeHtml(codeContent.join('\n')) + '</code></pre>');
-          codeContent = [];
-          inCodeBlock = false;
+          codeBlockContent.push(line);
+          continue;
+        }
+
+        // Handle headers
+        if (trimmed.startsWith('### ')) {
+          if (inList) {
+            processedLines.push(`<${listType} class="baseai-widget-markdown-${listType}">${listItems.join('')}</${listType}>`);
+            listItems = [];
+            inList = false;
+            listType = null;
+          }
+          processedLines.push(`<h3 class="baseai-widget-markdown-h3">${this.processInlineMarkdown(trimmed.substring(4))}</h3>`);
+          continue;
+        }
+        if (trimmed.startsWith('## ')) {
+          if (inList) {
+            processedLines.push(`<${listType} class="baseai-widget-markdown-${listType}">${listItems.join('')}</${listType}>`);
+            listItems = [];
+            inList = false;
+            listType = null;
+          }
+          processedLines.push(`<h2 class="baseai-widget-markdown-h2">${this.processInlineMarkdown(trimmed.substring(3))}</h2>`);
+          continue;
+        }
+        if (trimmed.startsWith('# ')) {
+          if (inList) {
+            processedLines.push(`<${listType} class="baseai-widget-markdown-${listType}">${listItems.join('')}</${listType}>`);
+            listItems = [];
+            inList = false;
+            listType = null;
+          }
+          processedLines.push(`<h1 class="baseai-widget-markdown-h1">${this.processInlineMarkdown(trimmed.substring(2))}</h1>`);
+          continue;
+        }
+
+        // Handle horizontal rules
+        if (trimmed === '---' || trimmed === '***') {
+          if (inList) {
+            processedLines.push(`<${listType} class="baseai-widget-markdown-${listType}">${listItems.join('')}</${listType}>`);
+            listItems = [];
+            inList = false;
+            listType = null;
+          }
+          processedLines.push('<hr class="baseai-widget-markdown-hr" />');
+          continue;
+        }
+
+        // Handle lists
+        const ulMatch = trimmed.match(/^[\*\-\+] (.+)$/);
+        const olMatch = trimmed.match(/^\d+\. (.+)$/);
+        
+        if (ulMatch || olMatch) {
+          const currentListType = ulMatch ? 'ul' : 'ol';
+          const itemText = ulMatch ? ulMatch[1] : olMatch[1];
+          
+          if (inList && listType !== currentListType) {
+            // Different list type, close previous list
+            processedLines.push(`<${listType} class="baseai-widget-markdown-${listType}">${listItems.join('')}</${listType}>`);
+            listItems = [];
+            listType = currentListType;
+          } else if (!inList) {
+            listType = currentListType;
+            inList = true;
+          }
+          
+          listItems.push(`<li class="baseai-widget-markdown-li">${this.processInlineMarkdown(itemText)}</li>`);
+          continue;
+        }
+
+        // If we hit a non-list line and we're in a list, close it
+        if (inList && trimmed !== '') {
+          processedLines.push(`<${listType} class="baseai-widget-markdown-${listType}">${listItems.join('')}</${listType}>`);
+          listItems = [];
+          inList = false;
+          listType = null;
+        }
+
+        // Handle blockquotes
+        if (trimmed.startsWith('> ')) {
+          processedLines.push(`<blockquote class="baseai-widget-markdown-blockquote">${this.processInlineMarkdown(trimmed.substring(2))}</blockquote>`);
+          continue;
+        }
+
+        // Regular paragraph line
+        if (trimmed === '') {
+          processedLines.push('');
         } else {
-          closeList();
-          inCodeBlock = true;
+          processedLines.push(this.processInlineMarkdown(line));
         }
-        continue;
-      }
-      if (inCodeBlock) {
-        codeContent.push(line);
-        continue;
       }
 
-      if (t.startsWith('### ')) { closeList(); processed.push('<h3 class="mc-h3">' + self.processInlineMarkdown(t.slice(4)) + '</h3>'); continue; }
-      if (t.startsWith('## ')) { closeList(); processed.push('<h2 class="mc-h2">' + self.processInlineMarkdown(t.slice(3)) + '</h2>'); continue; }
-      if (t.startsWith('# ')) { closeList(); processed.push('<h1 class="mc-h1">' + self.processInlineMarkdown(t.slice(2)) + '</h1>'); continue; }
-      if (t === '---' || t === '***') { closeList(); processed.push('<hr class="mc-hr"/>'); continue; }
-
-      var ulMatch = t.match(/^[\*\-+] (.+)$/);
-      var olMatch = t.match(/^\d+\. (.+)$/);
-      if (ulMatch || olMatch) {
-        var curType = ulMatch ? 'ul' : 'ol';
-        var itemText = ulMatch ? ulMatch[1] : olMatch[1];
-        if (inList && listType !== curType) closeList();
-        if (!inList) { listType = curType; inList = true; }
-        listItems.push('<li class="mc-li">' + self.processInlineMarkdown(itemText) + '</li>');
-        continue;
+      // Close any open code block or list
+      if (inCodeBlock && codeBlockContent.length > 0) {
+        const code = codeBlockContent.join('\n');
+        processedLines.push(`<pre class="baseai-widget-markdown-pre"><code class="baseai-widget-markdown-code">${this.escapeHtml(code)}</code></pre>`);
       }
-      if (inList && t !== '') closeList();
-      if (t.startsWith('> ')) {
-        processed.push('<blockquote class="mc-blockquote">' + self.processInlineMarkdown(t.slice(2)) + '</blockquote>');
-        continue;
+      if (inList && listItems.length > 0) {
+        processedLines.push(`<${listType} class="baseai-widget-markdown-${listType}">${listItems.join('')}</${listType}>`);
       }
-      if (t === '') {
-        processed.push('');
-      } else {
-        processed.push(self.processInlineMarkdown(line));
-      }
-    }
 
-    if (inCodeBlock && codeContent.length) {
-      processed.push('<pre class="mc-pre"><code class="mc-code">' + self.escapeHtml(codeContent.join('\n')) + '</code></pre>');
-    }
-    closeList();
-
-    var joined = processed.join('\n');
-    var paras = joined.split(/\n\n+/);
-    var html = paras.map(function(para) {
-      para = para.trim();
-      if (!para) return '';
-      if (/^<(h[1-6]|ul|ol|pre|blockquote|hr|li)/.test(para)) return para;
-      return '<p class="mc-p">' + para + '</p>';
-    }).join('');
-    return html;
-  };
-
-  MobileChatWidget.prototype.loadAgentData = function() {
-    var self = this;
-    if (!this.agentId) return Promise.resolve();
-    return fetch(this.apiUrl + '/agents/' + this.agentId, {
-      method: 'GET',
-      headers: { 'X-API-Key': this.apiKey }
-    }).then(function(r) {
-      if (r.ok) return r.json().then(function(data) { self.agentData = data; });
-    }).catch(function(err) {
-      if (self.debug) console.error('MobileChat: loadAgentData', err);
-    });
-  };
-
-  MobileChatWidget.prototype.loadThread = function() {
-    var self = this;
-    fetch(this.apiUrl + '/threads', {
-      method: 'POST',
-      headers: { 'X-API-Key': this.apiKey },
-      body: new FormData()
-    }).then(function(r) {
-      if (!r.ok) return r.text().then(function(t) { throw new Error(t); });
-      return r.json();
-    }).then(function(data) {
-      self.threadId = data.thread_id;
-      self.renderSavedMessages();
-      if (self.messages.length === 0 && self.agentData && self.agentData.greeting_message) {
-        self.showGreetingMessage();
-      }
-    }).catch(function(err) {
-      if (self.debug) console.error('MobileChat: loadThread', err);
-      self.addMessage('assistant', "Couldn't connect. Check your API key.");
-    });
-  };
-
-  MobileChatWidget.prototype.showGreetingMessage = function() {
-    if (!this.agentData || !this.agentData.greeting_message || !this.agentData.greeting_message.trim()) return;
-    var el = document.getElementById(this.containerId + '-messages');
-    if (!el || el.querySelector('.mc-greeting')) return;
-    if (this.messages.length > 0) return;
-    var div = document.createElement('div');
-    div.className = 'mc-msg assistant mc-greeting';
-    var bubble = document.createElement('div');
-    bubble.className = 'mc-bubble';
-    bubble.innerHTML = '<div class="mc-markdown-content">' + this.renderMarkdown(this.agentData.greeting_message) + '</div>';
-    div.appendChild(bubble);
-    el.appendChild(div);
-    el.scrollTop = el.scrollHeight;
-  };
-
-  MobileChatWidget.prototype.renderSavedMessages = function() {
-    var el = document.getElementById(this.containerId + '-messages');
-    if (!el) return;
-    el.innerHTML = '';
-    for (var i = 0; i < this.messages.length; i++) {
-      var msg = this.messages[i];
-      var row = document.createElement('div');
-      row.id = msg.id;
-      row.className = 'mc-msg ' + msg.type;
-      var bubble = document.createElement('div');
-      bubble.className = 'mc-bubble';
-      var parsed = this.parseFunctionCalls(msg.text);
-      if (parsed.text) {
-        var inner = document.createElement('div');
-        inner.className = 'mc-markdown-content';
-        inner.innerHTML = this.renderMarkdown(parsed.text);
-        bubble.appendChild(inner);
-      }
-      if (this.debug && parsed.functionCalls && parsed.functionCalls.length) {
-        bubble.appendChild(this.createFunctionCallsElement(parsed.functionCalls));
-      }
-      row.appendChild(bubble);
-      el.appendChild(row);
-    }
-    el.scrollTop = el.scrollHeight;
-    if (this.messages.length === 0 && this.agentData && this.agentData.greeting_message) {
-      this.showGreetingMessage();
-    }
-  };
-
-  MobileChatWidget.prototype.addMessage = function(type, text) {
-    var el = document.getElementById(this.containerId + '-messages');
-    if (!el) return null;
-    var existingGreeting = el.querySelector('.mc-greeting');
-    if (existingGreeting && this.messages.length === 0) existingGreeting.remove();
-    var id = 'msg-' + Date.now() + '-' + Math.random();
-    var row = document.createElement('div');
-    row.id = id;
-    row.className = 'mc-msg ' + type;
-    var bubble = document.createElement('div');
-    bubble.className = 'mc-bubble';
-    var parsed = this.parseFunctionCalls(text);
-    if (parsed.text) {
-      var inner = document.createElement('div');
-      inner.className = 'mc-markdown-content';
-      inner.innerHTML = this.renderMarkdown(parsed.text);
-      bubble.appendChild(inner);
-    }
-    if (this.debug && parsed.functionCalls && parsed.functionCalls.length) {
-      bubble.appendChild(this.createFunctionCallsElement(parsed.functionCalls));
-    }
-    row.appendChild(bubble);
-    el.appendChild(row);
-    el.scrollTop = el.scrollHeight;
-    this.messages.push({ id: id, type: type, text: text });
-    return id;
-  };
-
-  MobileChatWidget.prototype.addLoadingMessage = function() {
-    var el = document.getElementById(this.containerId + '-messages');
-    if (!el) return null;
-    var id = 'loading-' + Date.now();
-    var row = document.createElement('div');
-    row.id = id;
-    row.className = 'mc-msg assistant';
-    row.innerHTML = '<div class="mc-bubble"><div class="mc-loading"><span></span><span></span><span></span></div></div>';
-    el.appendChild(row);
-    el.scrollTop = el.scrollHeight;
-    return id;
-  };
-
-  MobileChatWidget.prototype.updateMessage = function(messageId, text) {
-    var idx = this.messages.findIndex(function(m) { return m.id === messageId; });
-    if (idx !== -1) {
-      this.messages[idx].text = text;
-    }
-    var row = document.getElementById(messageId);
-    if (!row) return;
-    var bubble = row.querySelector('.mc-bubble');
-    if (!bubble) return;
-    var parsed = this.parseFunctionCalls(text);
-    bubble.innerHTML = '';
-    if (parsed.text) {
-      var inner = document.createElement('div');
-      inner.className = 'mc-markdown-content';
-      inner.innerHTML = this.renderMarkdown(parsed.text);
-      bubble.appendChild(inner);
-    }
-    if (this.debug && parsed.functionCalls && parsed.functionCalls.length) {
-      bubble.appendChild(this.createFunctionCallsElement(parsed.functionCalls));
-    }
-    var list = document.getElementById(this.containerId + '-messages');
-    if (list) list.scrollTop = list.scrollHeight;
-  };
-
-  MobileChatWidget.prototype.removeMessage = function(messageId) {
-    var el = document.getElementById(messageId);
-    if (el) el.remove();
-  };
-
-  MobileChatWidget.prototype.sendMessage = function() {
-    var input = document.getElementById(this.containerId + '-input');
-    if (!input) return;
-    var text = (input.value || '').trim();
-    if (!text || !this.threadId) return;
-    input.value = '';
-    input.disabled = true;
-    var sendBtn = document.getElementById(this.containerId + '-send');
-    if (sendBtn) sendBtn.disabled = true;
-    var self = this;
-    this.addMessage('user', text);
-    var loadingId = this.addLoadingMessage();
-    var assistantMessageId = null;
-    var fullText = '';
-    var streamClosed = false;
-    var loadingRemoved = false;
-
-    function safeJsonParse(str, def) {
-      try { return JSON.parse(str); } catch (e) { return def; }
-    }
-
-    function handleStreamMessage(rawData) {
-      if (streamClosed) return;
-      var data = rawData;
-      if (data.indexOf('data: ') === 0) data = data.slice(6).trim();
-      if (!data) return;
-      try {
-        var msg = safeJsonParse(data, null);
-        if (!msg) return;
-        if (msg.type === 'status' && msg.status && ['completed', 'stopped', 'failed'].indexOf(msg.status) !== -1) {
-          streamClosed = true;
-          return;
+      // Join lines and wrap paragraphs
+      let html = processedLines.join('\n');
+      
+      // Split by double newlines to create paragraphs
+      const paragraphs = html.split(/\n\n+/);
+      html = paragraphs.map(para => {
+        para = para.trim();
+        if (!para) return '';
+        // Don't wrap if it's already a block element
+        if (/^<(h[1-6]|ul|ol|pre|blockquote|hr|li)/.test(para)) {
+          return para;
         }
-        if (msg.type === 'assistant') {
-          var content = safeJsonParse(msg.content, {});
-          var meta = safeJsonParse(msg.metadata, {});
-          if (meta.stream_status === 'chunk' && content.content) {
-            if (!loadingRemoved) {
-              self.removeMessage(loadingId);
-              loadingRemoved = true;
-              assistantMessageId = self.addMessage('assistant', '');
+        return `<p class="baseai-widget-markdown-p">${para}</p>`;
+      }).join('');
+
+      return html;
+    }
+
+    // Process inline markdown (bold, italic, links, inline code)
+    processInlineMarkdown(text) {
+      if (!text || typeof text !== 'string') {
+        return '';
+      }
+
+      let html = this.escapeHtml(text);
+
+      // Images first (before links)
+      html = html.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '<img src="$2" alt="$1" class="baseai-widget-markdown-img" />');
+
+      // Links
+      html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer" class="baseai-widget-markdown-link">$1</a>');
+
+      // Inline code (single backticks) - must be before bold/italic
+      html = html.replace(/`([^`]+)`/g, '<code class="baseai-widget-markdown-inline-code">$1</code>');
+
+      // Bold (**text** or __text__) - process before italic
+      html = html.replace(/\*\*([^*]+?)\*\*/g, '<strong class="baseai-widget-markdown-strong">$1</strong>');
+      html = html.replace(/__([^_]+?)__/g, '<strong class="baseai-widget-markdown-strong">$1</strong>');
+
+      // Italic (*text* or _text_) - match single asterisks/underscores
+      // Since bold is already processed, remaining * and _ are for italic
+      html = html.replace(/\*([^*\n]+?)\*/g, '<em class="baseai-widget-markdown-em">$1</em>');
+      html = html.replace(/_([^_\n]+?)_/g, '<em class="baseai-widget-markdown-em">$1</em>');
+
+      return html;
+    }
+
+    addMessage(type, text) {
+      const messagesContainer = document.getElementById(`${this.containerId}-messages`);
+      if (!messagesContainer) return null;
+
+      // Remove "Start a conversation" header when first message is added
+      if (this.messages.length === 0) {
+        const existingHeader = messagesContainer.querySelector('.baseai-widget-greeting-header');
+        if (existingHeader) {
+          existingHeader.remove();
+        }
+        const existingGreeting = messagesContainer.querySelector('.baseai-widget-greeting-message');
+        if (existingGreeting) {
+          existingGreeting.remove();
+        }
+      }
+
+      const messageId = `msg-${Date.now()}-${Math.random()}`;
+      const messageDiv = document.createElement('div');
+      messageDiv.id = messageId;
+      messageDiv.className = `baseai-widget-message ${type}`;
+
+      const bubble = document.createElement('div');
+      bubble.className = 'baseai-widget-message-bubble';
+      
+      // Parse function calls from text
+      const { text: cleanText, functionCalls } = this.parseFunctionCalls(text);
+      
+      // Add text content with markdown rendering
+      if (cleanText) {
+        const markdownHtml = this.renderMarkdown(cleanText);
+        const textContainer = document.createElement('div');
+        textContainer.className = 'baseai-widget-markdown-content';
+        textContainer.innerHTML = markdownHtml;
+        bubble.appendChild(textContainer);
+      }
+      
+      // Add function calls if present and debug is enabled
+      if (functionCalls && this.debug) {
+        const functionCallsElement = this.createFunctionCallsElement(functionCalls);
+        bubble.appendChild(functionCallsElement);
+      }
+
+      messageDiv.appendChild(bubble);
+      messagesContainer.appendChild(messageDiv);
+      messagesContainer.scrollTop = messagesContainer.scrollHeight;
+
+      this.messages.push({ id: messageId, type, text });
+      this.saveMessages();
+      return messageId;
+    }
+
+    addLoadingMessage() {
+      const messagesContainer = document.getElementById(`${this.containerId}-messages`);
+      if (!messagesContainer) return null;
+
+      const messageId = `loading-${Date.now()}`;
+      const messageDiv = document.createElement('div');
+      messageDiv.id = messageId;
+      messageDiv.className = 'baseai-widget-message assistant';
+
+      const loading = document.createElement('div');
+      loading.className = 'baseai-widget-loading';
+      loading.innerHTML = '<div class="baseai-widget-loading-dots"><span></span><span></span><span></span></div>';
+
+      messageDiv.appendChild(loading);
+      messagesContainer.appendChild(messageDiv);
+      messagesContainer.scrollTop = messagesContainer.scrollHeight;
+
+      return messageId;
+    }
+
+    updateMessage(messageId, text) {
+      // Update message in messages array
+      const messageIndex = this.messages.findIndex(msg => msg.id === messageId);
+      if (messageIndex !== -1) {
+        this.messages[messageIndex].text = text;
+        this.saveMessages();
+      }
+
+      // Use requestAnimationFrame for smoother, faster DOM updates
+      if (this._updateFrame) {
+        cancelAnimationFrame(this._updateFrame);
+      }
+      
+      this._updateFrame = requestAnimationFrame(() => {
+        const messageDiv = document.getElementById(messageId);
+        if (messageDiv) {
+          const bubble = messageDiv.querySelector('.baseai-widget-message-bubble');
+          if (bubble) {
+            // Parse function calls from text
+            const { text: cleanText, functionCalls } = this.parseFunctionCalls(text);
+            
+            // Clear existing content
+            bubble.innerHTML = '';
+            
+            // Add text content with markdown rendering
+            if (cleanText) {
+              const markdownHtml = this.renderMarkdown(cleanText);
+              const textContainer = document.createElement('div');
+              textContainer.className = 'baseai-widget-markdown-content';
+              textContainer.innerHTML = markdownHtml;
+              bubble.appendChild(textContainer);
             }
-            fullText += content.content;
-            self.updateMessage(assistantMessageId, fullText);
-          } else if (meta.stream_status === 'complete') {
-            if (!loadingRemoved) {
-              self.removeMessage(loadingId);
-              loadingRemoved = true;
-              if (!assistantMessageId) assistantMessageId = self.addMessage('assistant', fullText || '');
+            
+            // Add function calls if present and debug is enabled
+            if (functionCalls && this.debug) {
+              const functionCallsElement = this.createFunctionCallsElement(functionCalls);
+              bubble.appendChild(functionCallsElement);
             }
-          } else if (content.content && !loadingRemoved) {
-            self.removeMessage(loadingId);
-            loadingRemoved = true;
-            fullText += content.content;
-            assistantMessageId = self.addMessage('assistant', fullText);
+            
+            const messagesContainer = document.getElementById(`${this.containerId}-messages`);
+            if (messagesContainer) {
+              messagesContainer.scrollTop = messagesContainer.scrollHeight;
+            }
           }
         }
-      } catch (e) {}
+        this._updateFrame = null;
+      });
     }
 
-    fetch(this.apiUrl + '/threads/' + this.threadId + '/messages', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-API-Key': this.apiKey },
-      body: JSON.stringify({ type: 'user', content: text, is_llm_message: true })
-    }).then(function() {
-      return fetch(self.apiUrl + '/thread/' + self.threadId + '/agent/start', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-API-Key': self.apiKey },
-        body: JSON.stringify({
-          stream: true,
-          agent_id: self.agentId
-        })
-      });
-    }).then(function(r) {
-      if (!r.ok) return r.text().then(function(t) { throw new Error(t); });
-      return r.json();
-    }).then(function(data) {
-      var agentRunId = data.agent_run_id;
-      if (!agentRunId) throw new Error('No agent run ID');
-      return fetch(self.apiUrl + '/agent-run/' + agentRunId + '/stream', {
-        method: 'GET',
-        headers: { 'X-API-Key': self.apiKey }
-      });
-    }).then(function(r) {
-      if (!r.ok) throw new Error('Stream failed');
-      return r.body.getReader();
-    }).then(function(reader) {
-      var decoder = new TextDecoder();
-      var buffer = '';
-      function pump() {
-        return reader.read().then(function(_ref) {
-          var done = _ref.done;
-          var value = _ref.value;
-          if (done) {
-            if (buffer.trim()) {
-              buffer.split('\n').forEach(function(line) {
-                if (line.trim().indexOf('data: ') === 0) handleStreamMessage(line);
-              });
-            }
-            if (!loadingRemoved) {
-              self.removeMessage(loadingId);
-              if (!fullText.trim()) self.addMessage('assistant', 'No response. Try again.');
-            }
-            input.disabled = false;
-            if (sendBtn) sendBtn.disabled = false;
-            if (input) input.focus();
-            return;
-          }
-          buffer += decoder.decode(value, { stream: true });
-          var lines = buffer.split('\n');
-          buffer = lines.pop() || '';
-          lines.forEach(function(line) {
-            if (line.trim() && line.indexOf('data: ') === 0) handleStreamMessage(line);
-          });
-          return pump();
-        });
+    removeMessage(messageId) {
+      const messageDiv = document.getElementById(messageId);
+      if (messageDiv) {
+        messageDiv.remove();
       }
-      return pump();
-    }).catch(function(err) {
-      if (self.debug) console.error('MobileChat: sendMessage', err);
-      if (!loadingRemoved) self.removeMessage(loadingId);
-      input.disabled = false;
-      if (sendBtn) sendBtn.disabled = false;
-      if (input) input.focus();
-    });
-  };
+    }
+  }
 
-  function initMobileChat() {
-    var scripts = document.querySelectorAll('script[data-agent-id]');
-    scripts.forEach(function(script) {
-      var isMobileChat = script.getAttribute('data-widget') === 'mobile-chat' ||
-        (script.src && script.src.indexOf('mobile-chat') !== -1);
-      if (!isMobileChat) return;
-      var agentId = script.getAttribute('data-agent-id');
-      var widgetKey = script.getAttribute('data-widget-key');
-      var apiKey = script.getAttribute('data-api-key');
-      var key = widgetKey || apiKey;
-      if (!key || key === 'YOUR_API_KEY' || key === 'YOUR_WIDGET_KEY') {
-        console.error('MobileChat: Set data-widget-key or data-api-key');
+  // Auto-initialize widget from script tag attributes
+  function initWidget() {
+    const scripts = document.querySelectorAll('script[data-agent-id]');
+    scripts.forEach((script) => {
+      const agentId = script.getAttribute('data-agent-id');
+      // Support both new widget key (wk_xxx) and legacy API key (pk_xxx:sk_xxx)
+      const widgetKey = script.getAttribute('data-widget-key');
+      const apiKey = script.getAttribute('data-api-key');
+      const keyToUse = widgetKey || apiKey;
+      const apiUrl = script.getAttribute('data-api-url');
+      const title = script.getAttribute('data-title');
+      const debug = script.getAttribute('data-debug') === 'true' || script.getAttribute('data-show-debug') === 'true';
+      const containerId = `baseai-widget-${agentId}`;
+
+      if (!keyToUse || keyToUse === 'YOUR_API_KEY' || keyToUse === 'YOUR_WIDGET_KEY') {
+        console.error('BaseAI Widget: Please set your widget key in the data-widget-key attribute');
         return;
       }
+
+      // Validate widget key format (should start with wk_ for widget keys)
+      if (widgetKey && !widgetKey.startsWith('wk_')) {
+        console.warn('BaseAI Widget: Widget key should start with wk_. Using provided key as-is.');
+      }
+
       if (!agentId) {
-        console.error('MobileChat: data-agent-id is required');
+        console.error('BaseAI Widget: Agent ID is required');
         return;
       }
-      var debugAttr = script.getAttribute('data-debug');
-      var showDebugAttr = script.getAttribute('data-show-debug');
-      var debug = (script.hasAttribute('data-debug') && debugAttr !== 'false') || showDebugAttr === 'true';
-      new MobileChatWidget({
-        apiKey: key,
-        agentId: agentId,
-        apiUrl: script.getAttribute('data-api-url'),
-        title: script.getAttribute('data-title') || 'Chat',
-        containerId: 'mobile-chat-' + agentId,
-        debug: debug
+
+      new BaseAIChatWidget({
+        apiKey: keyToUse,
+        agentId,
+        apiUrl,
+        title,
+        containerId,
+        debug,
       });
     });
   }
 
-  if (typeof document !== 'undefined') {
-    if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', initMobileChat);
-    } else {
-      initMobileChat();
-    }
+  // Initialize when DOM is ready
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initWidget);
+  } else {
+    initWidget();
   }
 
-  window.MobileChatWidget = MobileChatWidget;
+  // Export for manual initialization
+  window.BaseAIChatWidget = BaseAIChatWidget;
 })();
+
