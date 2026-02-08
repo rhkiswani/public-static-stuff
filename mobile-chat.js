@@ -409,7 +409,6 @@
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-API-Key': self.apiKey },
         body: JSON.stringify({
-          model_name: window.BASEAI_DEFAULT_MODEL || 'openrouter/minimax/minimax-m2',
           stream: true,
           agent_id: self.agentId
         })
