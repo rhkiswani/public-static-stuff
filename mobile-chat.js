@@ -510,13 +510,16 @@
         console.error('MobileChat: data-agent-id is required');
         return;
       }
+      var debugAttr = script.getAttribute('data-debug');
+      var showDebugAttr = script.getAttribute('data-show-debug');
+      var debug = (script.hasAttribute('data-debug') && debugAttr !== 'false') || showDebugAttr === 'true';
       new MobileChatWidget({
         apiKey: key,
         agentId: agentId,
         apiUrl: script.getAttribute('data-api-url'),
         title: script.getAttribute('data-title') || 'Chat',
         containerId: 'mobile-chat-' + agentId,
-        debug: script.getAttribute('data-debug') === 'true'
+        debug: debug
       });
     });
   }
