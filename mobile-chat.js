@@ -49,10 +49,22 @@
       '.mc-bubble{max-width:85%;padding:8px 12px;border-radius:12px;font-size:15px;line-height:1.4;word-wrap:break-word;position:relative}',
       '.mc-msg.user .mc-bubble{background:#effdde;border-top-right-radius:4px;box-shadow:0 1px 2px rgba(0,0,0,.07)}',
       '.mc-msg.assistant .mc-bubble{background:#fff;border-top-left-radius:4px;box-shadow:0 1px 2px rgba(0,0,0,.1)}',
-      '.mc-bubble p{margin:0 0 6px 0}.mc-bubble p:last-child{margin-bottom:0}',
-      '.mc-bubble a{color:#2481cc;text-decoration:none}',
-      '.mc-bubble code{background:rgba(0,0,0,.06);padding:2px 4px;border-radius:4px;font-size:14px}',
-      '.mc-bubble pre{background:rgba(0,0,0,.06);padding:10px;border-radius:8px;overflow-x:auto;margin:8px 0;font-size:13px}',
+      '.mc-bubble .mc-p{margin:0 0 8px 0;line-height:1.5}.mc-bubble .mc-p:last-child{margin-bottom:0}',
+      '.mc-bubble .mc-h1{font-size:1.15em;font-weight:700;margin:10px 0 6px 0;line-height:1.3}',
+      '.mc-bubble .mc-h2{font-size:1.08em;font-weight:600;margin:8px 0 4px 0;line-height:1.3}',
+      '.mc-bubble .mc-h3{font-size:1em;font-weight:600;margin:6px 0 4px 0;line-height:1.3}',
+      '.mc-bubble .mc-ul,.mc-bubble .mc-ol{margin:6px 0;padding-left:1.25em}',
+      '.mc-bubble .mc-ul{list-style-type:disc}.mc-bubble .mc-ol{list-style-type:decimal}',
+      '.mc-bubble .mc-li{margin:2px 0;line-height:1.45}',
+      '.mc-bubble .mc-blockquote{border-left:3px solid rgba(0,0,0,.15);padding-left:10px;margin:6px 0;color:rgba(0,0,0,.75);font-style:italic}',
+      '.mc-bubble .mc-hr{border:none;border-top:1px solid rgba(0,0,0,.1);margin:8px 0}',
+      '.mc-bubble .mc-link{color:#2481cc;text-decoration:none}',
+      '.mc-bubble .mc-link:hover{text-decoration:underline}',
+      '.mc-bubble .mc-img{max-width:100%;height:auto;border-radius:8px;margin:6px 0;display:block}',
+      '.mc-bubble .mc-inline-code,.mc-bubble .mc-code{background:rgba(0,0,0,.08);padding:2px 6px;border-radius:4px;font-size:0.9em;font-family:ui-monospace,monospace}',
+      '.mc-bubble .mc-pre{background:rgba(0,0,0,.06);padding:10px 12px;border-radius:8px;overflow-x:auto;margin:8px 0;font-size:13px;line-height:1.4}',
+      '.mc-bubble .mc-pre .mc-code{padding:0;background:transparent;font-size:inherit}',
+      '.mc-bubble .mc-strong{font-weight:600}.mc-bubble .mc-em{font-style:italic}',
       '.mc-loading{display:inline-flex;align-items:center;gap:6px;padding:8px 12px}',
       '.mc-loading span{width:6px;height:6px;border-radius:50%;background:#999;animation:mc-blink 1.2s ease-in-out infinite both}',
       '.mc-loading span:nth-child(2){animation-delay:.2s}.mc-loading span:nth-child(3){animation-delay:.4s}',
@@ -111,51 +123,106 @@
 
   MobileChatWidget.prototype.processInlineMarkdown = function(text) {
     if (!text || typeof text !== 'string') return '';
-    var html = this.escapeHtml(text);
-    html = html.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '<img src="$2" alt="$1" style="max-width:100%;border-radius:8px"/>');
-    html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
-    html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
-    html = html.replace(/\*\*([^*]+?)\*\*/g, '<strong>$1</strong>');
-    html = html.replace(/\*([^*\n]+?)\*/g, '<em>$1</em>');
+    var self = this;
+    var codeBlocks = [];
+    var html = text.replace(/`([^`]+)`/g, function(_, code) {
+      codeBlocks.push(self.escapeHtml(code));
+      return '\x01C' + (codeBlocks.length - 1) + '\x01';
+    });
+    html = self.escapeHtml(html);
+    html = html.replace(/\x01C(\d+)\x01/g, function(_, n) {
+      return '<code class="mc-inline-code">' + codeBlocks[parseInt(n, 10)] + '</code>';
+    });
+    html = html.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '<img src="$2" alt="$1" class="mc-img"/>');
+    html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener" class="mc-link">$1</a>');
+    html = html.replace(/\*\*([^*]+?)\*\*/g, '<strong class="mc-strong">$1</strong>');
+    html = html.replace(/__([^_]+?)__/g, '<strong class="mc-strong">$1</strong>');
+    html = html.replace(/\*([^*\n]+?)\*/g, '<em class="mc-em">$1</em>');
+    html = html.replace(/_([^_\n]+?)_/g, '<em class="mc-em">$1</em>');
     return html;
   };
 
   MobileChatWidget.prototype.renderMarkdown = function(text) {
     if (!text || typeof text !== 'string') return '';
     var lines = text.split('\n');
-    var out = [];
-    var i = 0;
-    while (i < lines.length) {
+    var processed = [];
+    var inCodeBlock = false;
+    var codeContent = [];
+    var inList = false;
+    var listType = null;
+    var listItems = [];
+    var self = this;
+
+    function closeList() {
+      if (inList && listItems.length) {
+        processed.push('<' + listType + ' class="mc-ul">' + listItems.join('') + '</' + listType + '>');
+        listItems = [];
+      }
+      inList = false;
+      listType = null;
+    }
+
+    for (var i = 0; i < lines.length; i++) {
       var line = lines[i];
       var t = line.trim();
+
       if (t.startsWith('```')) {
-        i++;
-        var code = [];
-        while (i < lines.length && !lines[i].trim().startsWith('```')) {
-          code.push(this.escapeHtml(lines[i]));
-          i++;
+        if (inCodeBlock) {
+          processed.push('<pre class="mc-pre"><code class="mc-code">' + self.escapeHtml(codeContent.join('\n')) + '</code></pre>');
+          codeContent = [];
+          inCodeBlock = false;
+        } else {
+          closeList();
+          inCodeBlock = true;
         }
-        out.push('<pre><code>' + code.join('\n') + '</code></pre>');
-        i++;
         continue;
       }
-      if (t.startsWith('### ')) { out.push('<h3>' + this.processInlineMarkdown(t.slice(4)) + '</h3>'); i++; continue; }
-      if (t.startsWith('## ')) { out.push('<h2>' + this.processInlineMarkdown(t.slice(3)) + '</h2>'); i++; continue; }
-      if (t.startsWith('# ')) { out.push('<h1>' + this.processInlineMarkdown(t.slice(2)) + '</h1>'); i++; continue; }
-      if (t.startsWith('- ') || t.match(/^\d+\. /)) {
-        out.push('<ul>');
-        while (i < lines.length && (lines[i].trim().startsWith('- ') || lines[i].trim().match(/^\d+\. /))) {
-          var li = lines[i].trim().replace(/^[-]\s*|\d+\.\s*/, '');
-          out.push('<li>' + this.processInlineMarkdown(li) + '</li>');
-          i++;
-        }
-        out.push('</ul>');
+      if (inCodeBlock) {
+        codeContent.push(line);
         continue;
       }
-      if (t) out.push('<p>' + this.processInlineMarkdown(line) + '</p>');
-      i++;
+
+      if (t.startsWith('### ')) { closeList(); processed.push('<h3 class="mc-h3">' + self.processInlineMarkdown(t.slice(4)) + '</h3>'); continue; }
+      if (t.startsWith('## ')) { closeList(); processed.push('<h2 class="mc-h2">' + self.processInlineMarkdown(t.slice(3)) + '</h2>'); continue; }
+      if (t.startsWith('# ')) { closeList(); processed.push('<h1 class="mc-h1">' + self.processInlineMarkdown(t.slice(2)) + '</h1>'); continue; }
+      if (t === '---' || t === '***') { closeList(); processed.push('<hr class="mc-hr"/>'); continue; }
+
+      var ulMatch = t.match(/^[\*\-+] (.+)$/);
+      var olMatch = t.match(/^\d+\. (.+)$/);
+      if (ulMatch || olMatch) {
+        var curType = ulMatch ? 'ul' : 'ol';
+        var itemText = ulMatch ? ulMatch[1] : olMatch[1];
+        if (inList && listType !== curType) closeList();
+        if (!inList) { listType = curType; inList = true; }
+        listItems.push('<li class="mc-li">' + self.processInlineMarkdown(itemText) + '</li>');
+        continue;
+      }
+      if (inList && t !== '') closeList();
+      if (t.startsWith('> ')) {
+        processed.push('<blockquote class="mc-blockquote">' + self.processInlineMarkdown(t.slice(2)) + '</blockquote>');
+        continue;
+      }
+      if (t === '') {
+        processed.push('');
+      } else {
+        processed.push(self.processInlineMarkdown(line));
+      }
     }
-    return out.join('');
+
+    if (inCodeBlock && codeContent.length) {
+      processed.push('<pre class="mc-pre"><code class="mc-code">' + self.escapeHtml(codeContent.join('\n')) + '</code></pre>');
+    }
+    closeList();
+
+    var joined = processed.join('\n');
+    var paras = joined.split(/\n\n+/);
+    var html = paras.map(function(para) {
+      para = para.trim();
+      if (!para) return '';
+      if (/^<(h[1-6]|ul|ol|pre|blockquote|hr|li)/.test(para)) return para;
+      return '<p class="mc-p">' + para + '</p>';
+    }).join('');
+    return html;
   };
 
   MobileChatWidget.prototype.loadAgentData = function() {
