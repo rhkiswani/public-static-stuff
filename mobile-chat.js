@@ -14,70 +14,14 @@
       this.isOpen = false;
       this.messages = [];
       this.agentData = null; // Store agent data for greeting message
-      
-      // Storage keys for persistence
-      this.storageKey = `baseai-widget-${this.agentId}`;
-      this.threadStorageKey = `baseai-widget-thread-${this.agentId}`;
-      
+
       this.init();
     }
 
     async init() {
       this.createWidget();
-      this.loadSavedData();
       await this.loadAgentData();
       await this.loadThread();
-    }
-
-    // Load saved threadId and messages from localStorage
-    loadSavedData() {
-      try {
-        // Load threadId
-        const savedThreadId = localStorage.getItem(this.threadStorageKey);
-        if (savedThreadId) {
-          this.threadId = savedThreadId;
-          if (this.debug) {
-            console.log('BaseAI Widget: Loaded saved threadId:', this.threadId);
-          }
-        }
-
-        // Load messages
-        const savedMessages = localStorage.getItem(this.storageKey);
-        if (savedMessages) {
-          this.messages = JSON.parse(savedMessages);
-          if (this.debug) {
-            console.log('BaseAI Widget: Loaded', this.messages.length, 'saved messages');
-          }
-        }
-      } catch (error) {
-        if (this.debug) {
-          console.error('BaseAI Widget: Failed to load saved data', error);
-        }
-      }
-    }
-
-    // Save messages to localStorage
-    saveMessages() {
-      try {
-        localStorage.setItem(this.storageKey, JSON.stringify(this.messages));
-      } catch (error) {
-        if (this.debug) {
-          console.error('BaseAI Widget: Failed to save messages', error);
-        }
-      }
-    }
-
-    // Save threadId to localStorage
-    saveThreadId() {
-      try {
-        if (this.threadId) {
-          localStorage.setItem(this.threadStorageKey, this.threadId);
-        }
-      } catch (error) {
-        if (this.debug) {
-          console.error('BaseAI Widget: Failed to save threadId', error);
-        }
-      }
     }
 
     createWidget() {
@@ -864,28 +808,13 @@
 
     async loadThread() {
       try {
-        // If we have a saved threadId, use it instead of creating a new one
-        if (this.threadId) {
-          if (this.debug) {
-            console.log('BaseAI Widget: Using saved threadId:', this.threadId);
-          }
-          // Render saved messages
-          this.renderSavedMessages();
-          // Show greeting message if no messages and agent has one
-          if (this.messages.length === 0 && this.agentData?.greeting_message) {
-            this.showGreetingMessage();
-          }
-          return;
-        }
-
-        // Create a new thread (endpoint expects form data, not JSON)
+        // Always create a new thread (no history persistence)
         const formData = new FormData();
-        
-        // Debug: Log API key (first 10 chars only for security)
+
         if (this.debug) {
           console.log('BaseAI Widget: Sending request with API key:', this.apiKey ? `${this.apiKey.substring(0, 10)}...` : 'MISSING');
         }
-        
+
         const response = await fetch(`${this.apiUrl}/threads`, {
           method: 'POST',
           headers: {
@@ -901,13 +830,8 @@
 
         const data = await response.json();
         this.threadId = data.thread_id;
-        this.saveThreadId();
-        
-        // Render saved messages if any
-        this.renderSavedMessages();
-        
-        // Show greeting message if no messages and agent has one
-        if (this.messages.length === 0 && this.agentData?.greeting_message) {
+
+        if (this.agentData?.greeting_message) {
           this.showGreetingMessage();
         }
       } catch (error) {
@@ -981,54 +905,6 @@
       messagesContainer.scrollTop = messagesContainer.scrollHeight;
     }
 
-    // Render saved messages from localStorage
-    renderSavedMessages() {
-      const messagesContainer = document.getElementById(`${this.containerId}-messages`);
-      if (!messagesContainer) return;
-
-      // Clear container first
-      messagesContainer.innerHTML = '';
-
-      // Render each saved message
-      this.messages.forEach((msg) => {
-        const messageDiv = document.createElement('div');
-        messageDiv.id = msg.id;
-        messageDiv.className = `baseai-widget-message ${msg.type}`;
-
-        const bubble = document.createElement('div');
-        bubble.className = 'baseai-widget-message-bubble';
-        
-        // Parse function calls from text
-        const { text: cleanText, functionCalls } = this.parseFunctionCalls(msg.text);
-        
-        // Add text content with markdown rendering
-        if (cleanText) {
-          const markdownHtml = this.renderMarkdown(cleanText);
-          const textContainer = document.createElement('div');
-          textContainer.className = 'baseai-widget-markdown-content';
-          textContainer.innerHTML = markdownHtml;
-          bubble.appendChild(textContainer);
-        }
-        
-        // Add function calls if present and debug is enabled
-        if (functionCalls && this.debug) {
-          const functionCallsElement = this.createFunctionCallsElement(functionCalls);
-          bubble.appendChild(functionCallsElement);
-        }
-
-        messageDiv.appendChild(bubble);
-        messagesContainer.appendChild(messageDiv);
-      });
-
-      // Scroll to bottom
-      messagesContainer.scrollTop = messagesContainer.scrollHeight;
-
-      // If no messages were rendered, show greeting message if available
-      if (this.messages.length === 0 && this.agentData?.greeting_message) {
-        this.showGreetingMessage();
-      }
-    }
-
     async sendMessage() {
       const input = document.getElementById(`${this.containerId}-input`);
       if (!input) return;
@@ -1075,8 +951,7 @@
             'X-API-Key': this.apiKey,
           },
           body: JSON.stringify({
-            model_name: window.BASEAI_DEFAULT_MODEL || 'openrouter/minimax/minimax-m2', // Default model from config or fallback
-            stream: true, // Always stream for better UX
+            stream: true,
             agent_id: this.agentId,
           }),
         });
@@ -1887,7 +1762,6 @@
       messagesContainer.scrollTop = messagesContainer.scrollHeight;
 
       this.messages.push({ id: messageId, type, text });
-      this.saveMessages();
       return messageId;
     }
 
@@ -1912,11 +1786,9 @@
     }
 
     updateMessage(messageId, text) {
-      // Update message in messages array
       const messageIndex = this.messages.findIndex(msg => msg.id === messageId);
       if (messageIndex !== -1) {
         this.messages[messageIndex].text = text;
-        this.saveMessages();
       }
 
       // Use requestAnimationFrame for smoother, faster DOM updates
